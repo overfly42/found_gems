@@ -40,23 +40,26 @@ class gem_searcher:
         y_bot = my_pos["bot"][1]
         for x in gems:
             x['distance'] = abs(x_bot - x['x_gem']) +abs(y_bot-x['y_gem']) 
-        gems.sort(key=lambda x:x['distance'])
         return {'x':x_bot,'y':y_bot}, gems,my_pos
+    def select_gem(__self__,gems) -> tuple[int,int]:
+        gems.sort(key=lambda x:x['distance'])
+        return gems[0]['x_gem'], gems[0]['y_gem']
     def main(__self__):
         for line in sys.stdin:
             data = json.loads(line)
+
             bot, gems, meta_data = __self__.analyse_json(data)
-            x_gem = gems[0]['x_gem']
-            y_gem = gems[0]['y_gem']
+            x_gem, y_gem = __self__.select_gem(gems) 
+
             if x_gem != bot['x']:
                 move = 'E' if x_gem > bot['x'] else 'W'
             elif y_gem != bot['y']:
                 move = 'S' if y_gem > bot['y'] else 'N'
             else:
                 move = random.choice(["N", "S", "E", "W"])
+
             print(move, flush=True)
             meta_data['selected'] = move
             __self__.log(json.dumps(meta_data))
-            first_tick = False
 if __name__ == "__main__":
     gem_searcher().main()
