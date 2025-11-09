@@ -2,7 +2,7 @@
 import sys, json, random
 import itertools
 
-DEBUG = True
+DEBUG = False
 MAX_DISTANCE = 10
 MAX_GEM_FOR_PERMUTATION = 7
 #14289
