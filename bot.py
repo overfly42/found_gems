@@ -81,7 +81,9 @@ class gem_searcher:
             points = perm[0]['ttl'] - dist
             for i in range(len(perm)-1):
                 dist += __self__.calc_distance((perm[i]['x_gem'],perm[i]['y_gem']), (perm[i+1]['x_gem'],perm[i+1]['y_gem']))
-                if dist - 1 <= __self__.max_ticks - __self__.current_tick:#Magic number to allow walk to the last tick.
+                gem_catchable = dist <= perm[i+1]['ttl']
+                gem_reachable = dist  + 1 <= __self__.max_ticks - __self__.current_tick
+                if gem_reachable and gem_catchable:#Magic number to allow walk to the last tick.
                     points += perm[i+1]['ttl'] - dist
             if points > best_points or (points == best_points and dist < best_dist):
                 best_points = points
