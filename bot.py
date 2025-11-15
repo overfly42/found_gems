@@ -7,13 +7,10 @@ import numpy as np
 DEBUG = False
 MAX_DISTANCE = 10
 MAX_GEM_FOR_PERMUTATION = 8
-DECAY_FACTOR = 0.7
+DECAY_FACTOR = 0.8
 USE_MAP_MOVE_SELECTOR = True
-NUMBER_OF_LAST_POSITIONS = 3
+NUMBER_OF_LAST_POSITIONS = 2
 
-#1you3km 
-# Map Selector 9065
-# Old Selector  14228
 
 random.seed(1)
 class gem_searcher:
@@ -129,7 +126,7 @@ class gem_searcher:
         bot_x = __self__.my_pos['bot'][0]
         bot_y = __self__.my_pos['bot'][1]
         directions = {}
-        #Map is indexed [y,x]
+        #Map is indexed [y,x] Select the possible next steps
         directions[map[bot_y,max(bot_x-1,0)]] = 'W'
         directions[map[bot_y,min(bot_x+1,__self__.width-1)]] = 'E'
         directions[map[max(bot_y-1,0),bot_x]] = 'N'

@@ -1,0 +1,10 @@
+#1you3km 
+# Map Selector 9065
+# Old Selector  14228
+# 2025-11-13 ruby .\runner.rb -s 16qs5fh    --profile ..\found_gems\
+# 2025-11-15 ruby runner.rb --seed 1w0qih2 --profile ..\found_gems\  (decay 0.7 last pos 3): 274596
+# 2025-11-15 with other parameter (decay factor 0.8 and number of last positions 2):         274943
+# ruby .\runner.rb -s 1wxwcs8 ..\found_gems\        NEW 15624
+# ruby .\runner.rb -s 1wxwcs8 ..\found_gems\        OLD 15639
+# ruby .\runner.rb -s 1f3u6yc ..\found_gems\        NEW 
+# ruby .\runner.rb -s 1f3u6yc ..\found_gems\        OLD 13934
