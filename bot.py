@@ -2,15 +2,21 @@
 import sys, json, random
 import itertools
 import numpy as np
+from uuid import uuid4
 
 
 DEBUG = False
-MAX_DISTANCE = 10
+MAX_DISTANCE = 2
 MAX_GEM_FOR_PERMUTATION = 8
 DECAY_FACTOR = 0.8
 USE_MAP_MOVE_SELECTOR = True
 NUMBER_OF_LAST_POSITIONS = 2
+OPPONENT_PENALTY_TTL = 5
 
+# Seed: 1noghcl / Score: 6615 / 7822
+# ruby runner.rb --seed 1noghcl ..\found_gems\ ..\found_gems_old\   6337 / 8122
+#                                                                   6682 / 7825
+# ruby runner.rb --seed 1n0h6kk ..\found_gems\ ..\found_gems_old\   7849 / 7801
 
 random.seed(1)
 class gem_searcher:
@@ -24,6 +30,10 @@ class gem_searcher:
         __self__.max_ticks = 0
         __self__.central_pos = (0,0)
         __self__.last_positions = []
+        __self__.folder = str(uuid4())
+        if DEBUG:
+            import os
+            os.makedirs(__self__.folder,exist_ok=True)
     def main(__self__):
         for line in sys.stdin:
             __self__.log('----------------')
@@ -49,7 +59,7 @@ class gem_searcher:
         '''Stores the bot state to a file if DEBUG is enabled. Each file is numbered sequentially'''
         __self__.counter += 1
         if DEBUG:
-            with open(f"bot_state{__self__.counter:05}.json","w") as f:
+            with open(f"{__self__.folder}/bot_state{__self__.counter:05}.json","w") as f:
                 json.dump(value,f)
 
     def calc_distance(__self__,pos1:tuple[int,int],pos2:tuple[int,int])->int:
@@ -69,8 +79,10 @@ class gem_searcher:
             __self__.max_ticks = __self__.config.get("max_ticks")
             __self__.first_tick = False
             #Say hello World
-            print(f"Overflys bot searching for gems on a {__self__.width}x{__self__.height} map",file=sys.stderr, flush=True)
+
+                
         __self__.current_tick = data.get("tick")
+        __self__.opponents = [x['position'] for x in data.get("visible_bots",[])]
         my_pos = {'bot':data['bot'],"visible_gems":data.get("visible_gems",None)}
         __self__.last_positions.append(my_pos['bot'])
         if len(__self__.last_positions) > NUMBER_OF_LAST_POSITIONS:
@@ -79,13 +91,15 @@ class gem_searcher:
             my_pos["visible_gems"] = [
                 {
                     'position':__self__.central_pos,
-                    'ttl':1
+                    'ttl':10
                 }
             ]
         gems = [{
             'x_gem':  x['position'][0],
             'y_gem': x['position'][1],
-            'ttl': x['ttl']
+            'ttl': x['ttl'],
+            'distance_to_oppeent': min([__self__.calc_distance(x['position'],opp) for opp in __self__.opponents]) if __self__.opponents else float('inf'),
+            'distance':__self__.calc_distance(my_pos['bot'], x['position'])
             } for x in my_pos["visible_gems"]
         ]
         for x in gems:
@@ -109,10 +123,18 @@ class gem_searcher:
             Build a distance decay map for all gems
         '''
         full_map = np.zeros((__self__.height,__self__.width))
+        # Remove Gems much closer to the opponent than to us
+        orderd_gems = sorted(gems,key=lambda x:x['distance_to_oppeent'] - x['distance'])
+        if len(orderd_gems) > 1 and orderd_gems[0]['distance_to_oppeent'] < orderd_gems[0]['distance'] + MAX_DISTANCE:
+            __self__.log(f'Removed gem at {orderd_gems[0]["x_gem"]},{orderd_gems[0]["y_gem"]} as too close to opponent')
+            gems.remove(orderd_gems[0])
         # Build a map for each gem and add it to the full map
         for gem in gems:
             single_map = __self__.build_single_map(gem)
             full_map += single_map
+        for opp in __self__.opponents:
+            single_map = __self__.build_single_map({'x_gem':opp[0],'y_gem':opp[1],'ttl':OPPONENT_PENALTY_TTL})
+            full_map -= single_map
         # Set bot position to very low value to avoid selecting it
         full_map[__self__.my_pos['bot'][1],__self__.my_pos['bot'][0]] = -0
         #Set all old positions to 0, to avoid going in circles
