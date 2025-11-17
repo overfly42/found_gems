@@ -8,3 +8,5 @@
 # ruby .\runner.rb -s 1wxwcs8 ..\found_gems\        OLD 15639
 # ruby .\runner.rb -s 1f3u6yc ..\found_gems\        NEW 
 # ruby .\runner.rb -s 1f3u6yc ..\found_gems\        OLD 13934
+Stage 1
+ruby runner.rb  --seed ykhwa5 ..\found_gems\ 1903

@@ -7,16 +7,10 @@ from uuid import uuid4
 
 DEBUG = False
 MAX_DISTANCE = 2
-MAX_GEM_FOR_PERMUTATION = 8
 DECAY_FACTOR = 0.8
-USE_MAP_MOVE_SELECTOR = True
-NUMBER_OF_LAST_POSITIONS = 2
+NUMBER_OF_LAST_POSITIONS = 20
 OPPONENT_PENALTY_TTL = 5
 
-# Seed: 1noghcl / Score: 6615 / 7822
-# ruby runner.rb --seed 1noghcl ..\found_gems\ ..\found_gems_old\   6337 / 8122
-#                                                                   6682 / 7825
-# ruby runner.rb --seed 1n0h6kk ..\found_gems\ ..\found_gems_old\   7849 / 7801
 
 random.seed(1)
 class gem_searcher:
@@ -28,9 +22,13 @@ class gem_searcher:
         __self__.counter = 0
         __self__.current_tick = 0
         __self__.max_ticks = 0
-        __self__.central_pos = (0,0)
+        __self__.central_map = None
         __self__.last_positions = []
         __self__.folder = str(uuid4())
+        __self__.walls = None
+        __self__.gems = {}
+        __self__.fields = None
+        # __self__.unseen_pos = None
         if DEBUG:
             import os
             os.makedirs(__self__.folder,exist_ok=True)
@@ -39,27 +37,20 @@ class gem_searcher:
             __self__.log('----------------')
             data = json.loads(line)
 
-            bot, gems, meta_data = __self__.analyse_json(data)
-            if USE_MAP_MOVE_SELECTOR:
-                map = __self__.build_map(gems)
-                move = __self__.select_move(map)
-            else:
-                move = None
-            if not move:
-                move = __self__.select_move_old(bot,gems)
-
+            __self__.analyse_json(data)
+            map = __self__.build_map()
+            move = __self__.select_move(map)
             print(move, flush=True)
-            meta_data['selected'] = move
-            __self__.log(json.dumps(meta_data))
+
     def log(__self__,message):
         '''Writes to STD ERR if DEBUG is enabled'''
         if DEBUG:
             print(message,file=sys.stderr,flush=True)
-    def store(__self__,value):
+    def store(__self__,value,prefix:str='data'):
         '''Stores the bot state to a file if DEBUG is enabled. Each file is numbered sequentially'''
         __self__.counter += 1
         if DEBUG:
-            with open(f"{__self__.folder}/bot_state{__self__.counter:05}.json","w") as f:
+            with open(f"{__self__.folder}/{prefix}_bot_state{__self__.counter:05}.json","w") as f:
                 json.dump(value,f)
 
     def calc_distance(__self__,pos1:tuple[int,int],pos2:tuple[int,int])->int:
@@ -69,43 +60,45 @@ class gem_searcher:
         return abs(pos1[0]-pos2[0]) + abs(pos1[1]-pos2[1])
 
     def analyse_json(__self__,data):
-        __self__.store(data)
+        __self__.store(data,'raw')
         if __self__.first_tick:
             __self__.log('First Tick')
             __self__.config = data.get("config", {})
             __self__.width = __self__.config.get("width")
             __self__.height = __self__.config.get("height")
-            __self__.central_pos = (__self__.width //2, __self__.height //2)
             __self__.max_ticks = __self__.config.get("max_ticks")
             __self__.first_tick = False
-            #Say hello World
-
-                
+            __self__.walls = np.ones((__self__.height,__self__.width))
+            __self__.fields = np.ones((__self__.height,__self__.width))
+            __self__.central_map = __self__.build_single_map({'x_gem':__self__.width//2,'y_gem':__self__.height//2,'ttl':MAX_DISTANCE})
         __self__.current_tick = data.get("tick")
         __self__.opponents = [x['position'] for x in data.get("visible_bots",[])]
         my_pos = {'bot':data['bot'],"visible_gems":data.get("visible_gems",None)}
         __self__.last_positions.append(my_pos['bot'])
+        for wall in data.get('wall'):
+            __self__.walls[wall[1],wall[0]] = 0
+        for tile in data.get('floor'):
+            __self__.fields[tile[1],tile[0]] = 0.5
+        # __self__.unseen_pos = []
+        # for x,y in itertools.product(range(__self__.width),range(__self__.height)):
+        #     if __self__.walls[y,x] > 0.8 and __self__.fields[y,x] > 0.8:
+        #         __self__.unseen_pos.append( {'x_gem':x,'y_gem':y,'ttl':5} )
         if len(__self__.last_positions) > NUMBER_OF_LAST_POSITIONS:
             __self__.last_positions.pop(0)
-        if not my_pos["visible_gems"]:
-            my_pos["visible_gems"] = [
-                {
-                    'position':__self__.central_pos,
-                    'ttl':10
-                }
-            ]
-        gems = [{
-            'x_gem':  x['position'][0],
-            'y_gem': x['position'][1],
-            'ttl': x['ttl'],
-            'distance_to_oppeent': min([__self__.calc_distance(x['position'],opp) for opp in __self__.opponents]) if __self__.opponents else float('inf'),
-            'distance':__self__.calc_distance(my_pos['bot'], x['position'])
-            } for x in my_pos["visible_gems"]
-        ]
-        for x in gems:
-            x['distance'] =  __self__.calc_distance(my_pos['bot'], (x['x_gem'],x['y_gem']))
+        for gem in __self__.gems.values():
+            gem['ttl'] -= 1
+        outdated_gems = [key for key,gem in __self__.gems.items() if gem['ttl'] <= 0]
+        for key in outdated_gems:
+            __self__.gems.pop(key)
+        for gem in my_pos["visible_gems"]:
+            __self__.gems[(gem['position'][0],gem['position'][1])] = {
+            'x_gem': gem['position'][0],
+            'y_gem': gem['position'][1],
+            'ttl': gem['ttl'],
+            'distance_to_oppeent': min([__self__.calc_distance(gem['position'],opp) for opp in __self__.opponents]) if __self__.opponents else float('inf'),
+            'distance':__self__.calc_distance(my_pos['bot'], gem['position'])
+            }
         __self__.my_pos = my_pos
-        return {'x':my_pos["bot"][0],'y':my_pos["bot"][1]}, gems,my_pos
 
     # New Logic using overlayed maps
     def build_single_map(__self__,gem):
@@ -118,18 +111,26 @@ class gem_searcher:
         y = np.arange(__self__.height)[:,None]
         distance = gem['ttl'] * DECAY_FACTOR**( np.abs(x - x0) + np.abs(y - y0))
         return distance
-    def build_map(__self__,gems:list[dict])->np.ndarray:
+    def build_map(__self__,)->np.ndarray:
         '''
             Build a distance decay map for all gems
         '''
         full_map = np.zeros((__self__.height,__self__.width))
         # Remove Gems much closer to the opponent than to us
-        orderd_gems = sorted(gems,key=lambda x:x['distance_to_oppeent'] - x['distance'])
-        if len(orderd_gems) > 1 and orderd_gems[0]['distance_to_oppeent'] < orderd_gems[0]['distance'] + MAX_DISTANCE:
+        orderd_gems = sorted(__self__.gems.values(),key=lambda x:x['distance_to_oppeent'] - x['distance'])
+        do_remove = len(__self__.opponents) > 0
+        enough_gems = len(orderd_gems) > 1
+        removal_distance = enough_gems and ((orderd_gems[0]['distance_to_oppeent'] - orderd_gems[0]['distance']) > MAX_DISTANCE)
+        if  do_remove and enough_gems and removal_distance:
             __self__.log(f'Removed gem at {orderd_gems[0]["x_gem"]},{orderd_gems[0]["y_gem"]} as too close to opponent')
-            gems.remove(orderd_gems[0])
+            orderd_gems.pop(0)
         # Build a map for each gem and add it to the full map
-        for gem in gems:
+        if not orderd_gems:
+            full_map += __self__.central_map
+        # for gem in __self__.unseen_pos:
+        #     single_map = __self__.build_single_map(gem)
+        #     full_map += single_map * 0.01
+        for gem in orderd_gems:
             single_map = __self__.build_single_map(gem)
             full_map += single_map
         for opp in __self__.opponents:
@@ -140,11 +141,17 @@ class gem_searcher:
         #Set all old positions to 0, to avoid going in circles
         for pos in __self__.last_positions:
             full_map[pos[1],pos[0]] = 0
+        # Mask walls
+        full_map = full_map * __self__.walls
+        # Set floor
+        full_map = full_map * __self__.fields
         return full_map
     def select_move(__self__,map:np.ndarray)->str:
         '''
             gathers the four values around the bot, and its values. selects the field with the highest value as next move
         '''
+        # __self__.store({'map':str(map),'walls':str(__self__.walls),'fields':str(__self__.fields),'unseen':__self__.unseen_pos},'map')
+        __self__.store({'map':str(map),'walls':str(__self__.walls),'fields':str(__self__.fields)},'map')
         bot_x = __self__.my_pos['bot'][0]
         bot_y = __self__.my_pos['bot'][1]
         directions = {}
@@ -154,50 +161,9 @@ class gem_searcher:
         directions[map[max(bot_y-1,0),bot_x]] = 'N'
         directions[map[min(bot_y+1,__self__.height),bot_x]] = 'S'
         __self__.log(f'Bot position: {bot_x},{bot_y} {directions}')
-        if len(directions) <= 2:
-            return None
         best_dir = max(directions.keys(),key=lambda x:np.sum(x))
         return directions[best_dir]
 
-    # Old logic / fallback with o(x2) permutations
-    def select_gem(__self__,gems) -> tuple[int,int]:
-        if len(gems) > MAX_GEM_FOR_PERMUTATION:
-            # Sort GEMS by distance and by points. Select the one with most points. If there is 
-            dist_sort = sorted(gems,key=lambda x:x['distance'])
-            point_sort = sorted(gems,key=lambda x:x['ttl'],reverse=True)
-            if dist_sort[0]['distance'] <= MAX_DISTANCE:
-                return dist_sort[0]['x_gem'], dist_sort[0]['y_gem']
-            return point_sort[0]['x_gem'], point_sort[0]['y_gem']
-        best_order = None
-        best_dist = float('inf')
-        best_points = -1000
-        __self__.log(f"Calculating permutations for {len(gems)} gems")
-        for perm in itertools.permutations(gems):
-            dist = perm[0]['distance']
-            points = perm[0]['ttl'] - dist
-            for i in range(len(perm)-1):
-                dist += __self__.calc_distance((perm[i]['x_gem'],perm[i]['y_gem']), (perm[i+1]['x_gem'],perm[i+1]['y_gem']))
-                gem_catchable = dist <= perm[i+1]['ttl']
-                gem_reachable = dist  + 1 <= __self__.max_ticks - __self__.current_tick
-                if gem_reachable and gem_catchable:#Magic number to allow walk to the last tick.
-                    points += perm[i+1]['ttl'] - dist
-            if points > best_points or (points == best_points and dist < best_dist):
-                best_points = points
-                best_dist = dist
-                best_order = perm
-        return best_order[0]['x_gem'], best_order[0]['y_gem']
-    def select_move_old(__self__,bot,gems)->str:
-        __self__.log('Using old move selector')
-        x_gem, y_gem = __self__.select_gem(gems) 
-
-        if y_gem != bot['y']:
-            move = 'S' if y_gem > bot['y'] else 'N'
-        elif x_gem != bot['x']:
-            move = 'E' if x_gem > bot['x'] else 'W'
-
-        else:
-            move = 'WAIT'#random.choice(["N", "S", "E", "W"])
-        return move
 
 if __name__ == "__main__":
     gem_searcher().main()
