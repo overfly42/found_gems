@@ -8,7 +8,7 @@ from uuid import uuid4
 DEBUG = True
 MAX_DISTANCE = 2
 DECAY_FACTOR = 0.8
-NUMBER_OF_LAST_POSITIONS = 5
+NUMBER_OF_LAST_POSITIONS = 2
 OPPONENT_PENALTY_TTL = 5
 
 
@@ -27,11 +27,17 @@ class gem_searcher:
         __self__.folder = str(uuid4())
         __self__.walls = None
         __self__.gems = {}
-        __self__.fields = None
+        # __self__.fields = None
+        __self__.known_fields = set()
+        __self__.visible_fields = []
         __self__.next_corner = None
         __self__.corners = None
         __self__.corner_index = 0
         # __self__.unseen_pos = None
+        __self__.target_pos = 0
+        __self__.current_target = None
+        __self__.target_not_reached_counter = 10
+        __self__.visited_targets = set()
         if DEBUG:
             import os
             os.makedirs(__self__.folder,exist_ok=True)
@@ -72,17 +78,20 @@ class gem_searcher:
             __self__.max_ticks = __self__.config.get("max_ticks")
             __self__.first_tick = False
             __self__.walls = np.ones((__self__.height,__self__.width))
-            __self__.fields = np.ones((__self__.height,__self__.width))
+            # __self__.fields = np.ones((__self__.height,__self__.width))
             __self__.central_map = __self__.build_single_map({'x_gem':__self__.width//2,'y_gem':__self__.height//2,'ttl':MAX_DISTANCE})
             __self__.corners = [ (1,1), (1,__self__.height-2), (__self__.width-2,1), (__self__.width-2,__self__.height-2) ]
         __self__.current_tick = data.get("tick")
         __self__.opponents = [x['position'] for x in data.get("visible_bots",[])]
         my_pos = {'bot':data['bot'],"visible_gems":data.get("visible_gems",None)}
         __self__.last_positions.append(my_pos['bot'])
+        __self__.visited_targets.add((my_pos['bot'][0],my_pos['bot'][1]))
         for wall in data.get('wall'):
             __self__.walls[wall[1],wall[0]] = 0
-        for tile in data.get('floor'):
-            __self__.fields[tile[1],tile[0]] = 0.5
+        # for tile in data.get('floor'):
+        #     __self__.fields[tile[1],tile[0]] = 0.5
+        __self__.visible_fields = {(x[0],x[1]) for x in data.get('floor')}
+        __self__.known_fields.update(__self__.visible_fields)
         if __self__.current_tick % 50 == 0 or __self__.next_corner in data.get('wall') or __self__.next_corner in data.get('floor'):
             __self__.corner_index += 1
         # __self__.unseen_pos = []
@@ -94,6 +103,7 @@ class gem_searcher:
         for gem in __self__.gems.values():
             gem['ttl'] -= 1
         outdated_gems = [key for key,gem in __self__.gems.items() if gem['ttl'] <= 0]
+        outdated_gems.extend([key for key,gem in __self__.gems.items() if gem['x_gem'] == my_pos['bot'][0] and gem['y_gem'] == my_pos['bot'][1]])
         for key in outdated_gems:
             __self__.gems.pop(key)
         for gem in my_pos["visible_gems"]:
@@ -136,6 +146,7 @@ class gem_searcher:
         # for gem in __self__.unseen_pos:
         #     single_map = __self__.build_single_map(gem)
         #     full_map += single_map * 0.01
+        __self__.log(f'Building map with {len(orderd_gems)} gems')
         for gem in orderd_gems:
             single_map = __self__.build_single_map(gem)
             full_map += single_map
@@ -143,9 +154,43 @@ class gem_searcher:
             single_map = __self__.build_single_map({'x_gem':opp[0],'y_gem':opp[1],'ttl':OPPONENT_PENALTY_TTL})
             full_map -= single_map
         if not __self__.gems:
-            current_corner = __self__.corners[__self__.corner_index % len(__self__.corners)]           
-            corner_map = __self__.build_single_map({'x_gem':current_corner[0],'y_gem':current_corner[1],'ttl':1})
-            full_map += corner_map
+            __self__.log(f'No visible gems. Current Target: {__self__.current_target}')
+            __self__.target_not_reached_counter -= 1
+            times_up = __self__.target_not_reached_counter <= 0
+            target_reached = not __self__.current_target or (__self__.my_pos['bot'][0] == __self__.current_target[0] and __self__.my_pos['bot'][1] == __self__.current_target[1])
+            __self__.log(f'Target not reached counter: {__self__.target_not_reached_counter}, times_up: {times_up}, target_reached: {target_reached}')
+            if times_up or target_reached:
+                current_target_list = sorted(__self__.known_fields.difference(__self__.visible_fields))
+                reduced_targets = sorted(set(current_target_list).difference(__self__.visited_targets))
+                if reduced_targets:
+                    current_target_list = reduced_targets
+                __self__.log(f'visited targets: {__self__.visited_targets}, remaining targets: {current_target_list}')
+                __self__.target_pos += 1
+                __self__.target_not_reached_counter = 10
+                if current_target_list:
+                    __self__.current_target = current_target_list[__self__.target_pos % len(current_target_list)]
+                    __self__.visited_targets.add(__self__.current_target)
+                else:
+                    __self__.current_target = None
+            if __self__.current_target:
+                __self__.log(f'Moving to unseen field at {__self__.current_target}')
+                target_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':1})
+                full_map += target_map
+            else:
+                __self__.log('No unseen fields')
+                current_corner = __self__.corners[__self__.corner_index % len(__self__.corners)]           
+                corner_map = __self__.build_single_map({'x_gem':current_corner[0],'y_gem':current_corner[1],'ttl':1})
+                full_map += corner_map
+            # unseen_fields = __self__.known_fields.difference(__self__.visible_fields)
+            # for field in unseen_fields:
+            #     single_map = __self__.build_single_map({'x_gem':field[0],'y_gem':field[1],'ttl':1})
+            #     full_map += single_map
+            # if not unseen_fields:
+            #     __self__.log('No unseen fields')
+            #     current_corner = __self__.corners[__self__.corner_index % len(__self__.corners)]           
+            #     corner_map = __self__.build_single_map({'x_gem':current_corner[0],'y_gem':current_corner[1],'ttl':1})
+            #     full_map += corner_map
+            #Find all known but not currently visible fields
         # Set bot position to very low value to avoid selecting it
         # full_map[__self__.my_pos['bot'][1],__self__.my_pos['bot'][0]] = -0
         #Set all old positions to 0, to avoid going in circles
@@ -161,7 +206,7 @@ class gem_searcher:
             gathers the four values around the bot, and its values. selects the field with the highest value as next move
         '''
         # __self__.store({'map':str(map),'walls':str(__self__.walls),'fields':str(__self__.fields),'unseen':__self__.unseen_pos},'map')
-        __self__.store({'map':str(map),'walls':str(__self__.walls),'fields':str(__self__.fields)},'map')
+        # __self__.store({'map':str(map),'walls':str(__self__.walls),'fields':str(__self__.fields)},'map')
         bot_x = __self__.my_pos['bot'][0]
         bot_y = __self__.my_pos['bot'][1]
         directions = {}
