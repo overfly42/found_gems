@@ -8,7 +8,7 @@ from uuid import uuid4
 DEBUG = True
 MAX_DISTANCE = 2
 DECAY_FACTOR = 0.8
-NUMBER_OF_LAST_POSITIONS = 2
+NUMBER_OF_LAST_POSITIONS = 10
 OPPONENT_PENALTY_TTL = 5
 
 
@@ -29,6 +29,7 @@ class gem_searcher:
         __self__.gems = {}
         # __self__.fields = None
         __self__.known_fields = set()
+        __self__.known_walls = set()
         __self__.visible_fields = []
         __self__.next_corner = None
         __self__.corners = None
@@ -88,6 +89,7 @@ class gem_searcher:
         __self__.visited_targets.add((my_pos['bot'][0],my_pos['bot'][1]))
         for wall in data.get('wall'):
             __self__.walls[wall[1],wall[0]] = 0
+            __self__.known_walls.add((wall[0],wall[1]))
         # for tile in data.get('floor'):
         #     __self__.fields[tile[1],tile[0]] = 0.5
         __self__.visible_fields = {(x[0],x[1]) for x in data.get('floor')}
@@ -149,7 +151,7 @@ class gem_searcher:
         __self__.log(f'Building map with {len(orderd_gems)} gems')
         for gem in orderd_gems:
             single_map = __self__.build_single_map(gem)
-            full_map += single_map
+            full_map += single_map*10
         for opp in __self__.opponents:
             single_map = __self__.build_single_map({'x_gem':opp[0],'y_gem':opp[1],'ttl':OPPONENT_PENALTY_TTL})
             full_map -= single_map
@@ -174,7 +176,7 @@ class gem_searcher:
                     __self__.current_target = None
             if __self__.current_target:
                 __self__.log(f'Moving to unseen field at {__self__.current_target}')
-                target_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':1})
+                target_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':10})
                 full_map += target_map
             else:
                 __self__.log('No unseen fields')
@@ -197,7 +199,13 @@ class gem_searcher:
         for pos in __self__.last_positions:
             full_map[pos[1],pos[0]] = 0
         # Mask walls
+        # full_map = full_map * 100
+        # for wall in __self__.known_walls:
+        #     wall_map = __self__.build_single_map({'x_gem':wall[0],'y_gem':wall[1],'ttl':0.01})
+        #     full_map -= wall_map
         full_map = full_map * __self__.walls
+        # for wall in __self__.known_walls:
+        #     full_map[wall[1],wall[0]] = 0
         # # Set floor
         # full_map = full_map * __self__.fields
         return full_map

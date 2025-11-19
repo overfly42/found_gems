@@ -10,3 +10,9 @@
 # ruby .\runner.rb -s 1f3u6yc ..\found_gems\        OLD 13934
 Stage 1
 ruby runner.rb  --seed ykhwa5 ..\found_gems\ 1903
+ruby runner.rb  --seed 1az6qhq ..\found_gems\ 2222
+2025-11-19
+    ruby runner.rb  --seed 1k2jehv ..\found_gems\  807  -> 5727
+    ruby runner.rb  --seed 168xr6 ..\found_gems\  2554  -> 5323
+    ruby runner.rb  --seed 11zrije ..\found_gems\ 1210  -> 1933 -> 
+    ruby runner.rb  --seed p3q46m ..\found_gems\   561  -> 2294 -> 3847 -> 3692 -> 4288
