@@ -5,7 +5,7 @@ import numpy as np
 from uuid import uuid4
 
 
-DEBUG = True
+DEBUG = False
 MAX_DISTANCE = 2
 DECAY_FACTOR = 0.8
 NUMBER_OF_LAST_POSITIONS = 10
