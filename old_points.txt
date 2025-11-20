@@ -16,3 +16,11 @@ ruby runner.rb  --seed 1az6qhq ..\found_gems\ 2222
     ruby runner.rb  --seed 168xr6 ..\found_gems\  2554  -> 5323
     ruby runner.rb  --seed 11zrije ..\found_gems\ 1210  -> 1933 -> 
     ruby runner.rb  --seed p3q46m ..\found_gems\   561  -> 2294 -> 3847 -> 3692 -> 4288
+2025-11-20 Calulate around walls
+    ruby runner.rb  --seed 1k2jehv ..\found_gems\  -> 7655  -> 8691
+    ruby runner.rb  --seed 168xr6 ..\found_gems\   -> 6876  -> 12388
+    ruby runner.rb  --seed 11zrije ..\found_gems\  -> 1819
+    ruby runner.rb  --seed p3q46m ..\found_gems\   -> 7355  -> 11684
+    ruby runner.rb  --seed 14j6cso ..\found_gems\  7594 -> 10130
+
+    ruby runner.rb --seed 1x34eye --profile ..\found-gems\   

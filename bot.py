@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import sys, json, random
-import itertools
+from collections import deque
 import numpy as np
 from uuid import uuid4
 
@@ -8,7 +8,7 @@ from uuid import uuid4
 DEBUG = False
 MAX_DISTANCE = 2
 DECAY_FACTOR = 0.8
-NUMBER_OF_LAST_POSITIONS = 10
+NUMBER_OF_LAST_POSITIONS = 5
 OPPONENT_PENALTY_TTL = 5
 
 
@@ -39,6 +39,7 @@ class gem_searcher:
         __self__.current_target = None
         __self__.target_not_reached_counter = 10
         __self__.visited_targets = set()
+        __self__.last_seen_fields = {}
         if DEBUG:
             import os
             os.makedirs(__self__.folder,exist_ok=True)
@@ -90,16 +91,14 @@ class gem_searcher:
         for wall in data.get('wall'):
             __self__.walls[wall[1],wall[0]] = 0
             __self__.known_walls.add((wall[0],wall[1]))
-        # for tile in data.get('floor'):
-        #     __self__.fields[tile[1],tile[0]] = 0.5
         __self__.visible_fields = {(x[0],x[1]) for x in data.get('floor')}
+        for field in __self__.last_seen_fields.keys():
+            __self__.last_seen_fields[field] = 0 if field in __self__.visible_fields else __self__.last_seen_fields[field] + 1
+        for field in __self__.visible_fields:
+            __self__.last_seen_fields[field] = 0
         __self__.known_fields.update(__self__.visible_fields)
         if __self__.current_tick % 50 == 0 or __self__.next_corner in data.get('wall') or __self__.next_corner in data.get('floor'):
             __self__.corner_index += 1
-        # __self__.unseen_pos = []
-        # for x,y in itertools.product(range(__self__.width),range(__self__.height)):
-        #     if __self__.walls[y,x] > 0.8 and __self__.fields[y,x] > 0.8:
-        #         __self__.unseen_pos.append( {'x_gem':x,'y_gem':y,'ttl':5} )
         if len(__self__.last_positions) > NUMBER_OF_LAST_POSITIONS:
             __self__.last_positions.pop(0)
         for gem in __self__.gems.values():
@@ -118,17 +117,65 @@ class gem_searcher:
             }
         __self__.my_pos = my_pos
 
-    # New Logic using overlayed maps
     def build_single_map(__self__,gem):
         '''
             Build a distance decay map for a single gem. Most victory_points are near the gem, decaying with manhatten distance
         '''
-        x0 = gem['x_gem']
-        y0 = gem['y_gem']
-        x = np.arange(__self__.width)
-        y = np.arange(__self__.height)[:,None]
-        distance = gem['ttl'] * DECAY_FACTOR**( np.abs(x - x0) + np.abs(y - y0))
-        return distance
+        if not __self__.known_walls:
+            __self__.log('No known walls, using simple distance map')
+            x0 = gem['x_gem']
+            y0 = gem['y_gem']
+            x = np.arange(__self__.width)
+            y = np.arange(__self__.height)[:,None]
+            # map = gem['ttl'] * DECAY_FACTOR**( np.abs(x - x0) + np.abs(y - y0))
+            map = np.abs(x - x0) + np.abs(y - y0)
+        else:
+            map = np.full((__self__.height, __self__.width), 100, dtype=np.int8)
+
+            q = deque()
+            q.append((gem['x_gem'], gem['y_gem'], 0))
+
+            while q:
+                x, y, dist = q.popleft()
+
+                # bounds check
+                if x < 0 or x >= __self__.width or y < 0 or y >= __self__.height:
+                    continue
+                
+                # skip walls
+                if (x, y) in __self__.known_walls:
+                    continue
+                
+                # already has a shorter distance
+                if map[y, x] <= dist:
+                    continue
+                
+                map[y, x] = dist
+                nd = dist + 1
+
+                q.append((x+1, y, nd))
+                q.append((x-1, y, nd))
+                q.append((x, y+1, nd))
+                q.append((x, y-1, nd))
+            # map = np.ones((__self__.height,__self__.width)) * 15
+            # def recursive_decay(x:int,y:int,distance:int=1):
+            #     if x < 0 or x >= __self__.width or y < 0 or y >= __self__.height:
+            #         return
+            #     if (x,y) in __self__.known_walls:
+            #         return
+            #     if map[y,x] < distance:
+            #         return
+            #     map[y,x] = distance
+            #     distance+=1
+            #     recursive_decay(x+1,y,distance)
+            #     recursive_decay(x-1,y,distance)
+            #     recursive_decay(x,y+1,distance)
+            #     recursive_decay(x,y-1,distance)
+            # recursive_decay(gem['x_gem'],gem['y_gem'],0)
+        #map = gem['ttl'] * DECAY_FACTOR**( np.abs(x - x0) + np.abs(y - y0))
+        #__self__.log(str(map))
+        map = gem['ttl'] * DECAY_FACTOR**(map)
+        return map
     def build_map(__self__,)->np.ndarray:
         '''
             Build a distance decay map for all gems
@@ -143,11 +190,6 @@ class gem_searcher:
             __self__.log(f'Removed gem at {orderd_gems[0]["x_gem"]},{orderd_gems[0]["y_gem"]} as too close to opponent')
             orderd_gems.pop(0)
         # Build a map for each gem and add it to the full map
-        # if not orderd_gems:
-        #     full_map += __self__.central_map
-        # for gem in __self__.unseen_pos:
-        #     single_map = __self__.build_single_map(gem)
-        #     full_map += single_map * 0.01
         __self__.log(f'Building map with {len(orderd_gems)} gems')
         for gem in orderd_gems:
             single_map = __self__.build_single_map(gem)
@@ -156,33 +198,42 @@ class gem_searcher:
             single_map = __self__.build_single_map({'x_gem':opp[0],'y_gem':opp[1],'ttl':OPPONENT_PENALTY_TTL})
             full_map -= single_map
         if not __self__.gems:
-            __self__.log(f'No visible gems. Current Target: {__self__.current_target}')
-            __self__.target_not_reached_counter -= 1
-            times_up = __self__.target_not_reached_counter <= 0
-            target_reached = not __self__.current_target or (__self__.my_pos['bot'][0] == __self__.current_target[0] and __self__.my_pos['bot'][1] == __self__.current_target[1])
-            __self__.log(f'Target not reached counter: {__self__.target_not_reached_counter}, times_up: {times_up}, target_reached: {target_reached}')
-            if times_up or target_reached:
-                current_target_list = sorted(__self__.known_fields.difference(__self__.visible_fields))
-                reduced_targets = sorted(set(current_target_list).difference(__self__.visited_targets))
-                if reduced_targets:
-                    current_target_list = reduced_targets
-                __self__.log(f'visited targets: {__self__.visited_targets}, remaining targets: {current_target_list}')
-                __self__.target_pos += 1
-                __self__.target_not_reached_counter = 10
-                if current_target_list:
-                    __self__.current_target = current_target_list[__self__.target_pos % len(current_target_list)]
-                    __self__.visited_targets.add(__self__.current_target)
-                else:
-                    __self__.current_target = None
-            if __self__.current_target:
-                __self__.log(f'Moving to unseen field at {__self__.current_target}')
-                target_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':10})
-                full_map += target_map
-            else:
-                __self__.log('No unseen fields')
-                current_corner = __self__.corners[__self__.corner_index % len(__self__.corners)]           
-                corner_map = __self__.build_single_map({'x_gem':current_corner[0],'y_gem':current_corner[1],'ttl':1})
-                full_map += corner_map
+            max_time_field_not_seen = max(__self__.last_seen_fields.values())
+            relevant_fields = [field for field,not_seen in __self__.last_seen_fields.items() if not_seen == max_time_field_not_seen]
+            if __self__.current_target not in relevant_fields or __self__.target_not_reached_counter <=0:
+               __self__.current_target = random.choice(relevant_fields)
+               __self__.target_not_reached_counter = 10
+            single_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':1})
+            full_map += single_map
+            ################################
+            # __self__.log(f'No visible gems. Current Target: {__self__.current_target}')
+            # __self__.target_not_reached_counter -= 1
+            # times_up = __self__.target_not_reached_counter <= 0
+            # target_reached = not __self__.current_target or (__self__.my_pos['bot'][0] == __self__.current_target[0] and __self__.my_pos['bot'][1] == __self__.current_target[1])
+            # __self__.log(f'Target not reached counter: {__self__.target_not_reached_counter}, times_up: {times_up}, target_reached: {target_reached}')
+            # if times_up or target_reached:
+            #     current_target_list = sorted(__self__.known_fields.difference(__self__.visible_fields))
+            #     reduced_targets = sorted(set(current_target_list).difference(__self__.visited_targets))
+            #     if reduced_targets:
+            #         current_target_list = reduced_targets
+            #     __self__.log(f'visited targets: {__self__.visited_targets}, remaining targets: {current_target_list}')
+            #     __self__.target_pos += 1
+            #     __self__.target_not_reached_counter = 10
+            #     if current_target_list:
+            #         __self__.current_target = current_target_list[__self__.target_pos % len(current_target_list)]
+            #         __self__.visited_targets.add(__self__.current_target)
+            #     else:
+            #         __self__.current_target = None
+            # if __self__.current_target:
+            #     __self__.log(f'Moving to unseen field at {__self__.current_target}')
+            #     target_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':10})
+            #     full_map += target_map
+            # else:
+            #     __self__.log('No unseen fields')
+            #     current_corner = __self__.corners[__self__.corner_index % len(__self__.corners)]           
+            #     corner_map = __self__.build_single_map({'x_gem':current_corner[0],'y_gem':current_corner[1],'ttl':1})
+            #     full_map += corner_map
+            ################################
             # unseen_fields = __self__.known_fields.difference(__self__.visible_fields)
             # for field in unseen_fields:
             #     single_map = __self__.build_single_map({'x_gem':field[0],'y_gem':field[1],'ttl':1})
@@ -243,3 +294,8 @@ class gem_searcher:
 
 if __name__ == "__main__":
     gem_searcher().main()
+    # bot = gem_searcher()
+    # bot.width = 10
+    # bot.height = 10
+    # bot.known_walls.update([(3,4),(3,5),(3,6)]) 
+    # print(bot.build_single_map({'x_gem':5,'y_gem':5,'ttl':5}))
