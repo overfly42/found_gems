@@ -30,6 +30,9 @@ class gem_searcher:
         __self__.current_target = None
         __self__.target_not_reached_counter = 10
         __self__.last_seen_fields = {}
+        __self__.unseen_fields = set()
+        __self__.void_fields = set()
+        __self__.all_fields = set()
         if DEBUG:
             import os
             os.makedirs(__self__.folder,exist_ok=True)
@@ -69,6 +72,9 @@ class gem_searcher:
             __self__.max_ticks = __self__.config.get("max_ticks")
             __self__.first_tick = False
             __self__.walls = np.ones((__self__.height,__self__.width))
+            for x in range(__self__.width):
+                for y in range(__self__.height):
+                    __self__.all_fields.add((x,y))
         __self__.current_tick = data.get("tick")
         __self__.opponents = [x['position'] for x in data.get("visible_bots",[])]
         my_pos = {'bot':data['bot'],"visible_gems":data.get("visible_gems",None)}
@@ -81,6 +87,8 @@ class gem_searcher:
             __self__.last_seen_fields[field] = 0 if field in __self__.visible_fields else __self__.last_seen_fields[field] + 1
         for field in __self__.visible_fields:
             __self__.last_seen_fields[field] = 0
+        __self__.unseen_fields = set(__self__.all_fields - set(__self__.last_seen_fields.keys()) - __self__.known_walls - __self__.void_fields)
+        __self__.log(f'Unseen fields: {len(__self__.unseen_fields)}, void fields: {len(__self__.void_fields)}')
         if len(__self__.last_positions) > NUMBER_OF_LAST_POSITIONS:
             __self__.last_positions.pop(0)
         for gem in __self__.gems.values():
@@ -131,6 +139,11 @@ class gem_searcher:
                 q.append((x-1, y, nd))
                 q.append((x, y+1, nd))
                 q.append((x, y-1, nd))
+            # After map is built, check if the bot could reach the goal, else add to void fields
+            if map[__self__.my_pos['bot'][1],__self__.my_pos['bot'][0]] == 100:
+                __self__.void_fields.add((gem['x_gem'],gem['y_gem']))
+                map = np.full((__self__.height, __self__.width), 100, dtype=np.int8)
+
         map = gem['ttl'] * DECAY_FACTOR**(map)
         return map
 
@@ -157,13 +170,20 @@ class gem_searcher:
             full_map -= single_map
         # Explore unseen areas if no gems are visible
         if not __self__.gems:
-            max_time_field_not_seen = max(__self__.last_seen_fields.values())
-            relevant_fields = [field for field,not_seen in __self__.last_seen_fields.items() if not_seen == max_time_field_not_seen]
-            if __self__.current_target not in relevant_fields or __self__.target_not_reached_counter <=0:
-               __self__.current_target = random.choice(relevant_fields)
-               __self__.target_not_reached_counter = 10
-            single_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':1})
-            full_map += single_map
+            if __self__.unseen_fields:
+                __self__.log('No gems visible, exploring unseen fields')
+                for field in random.sample(sorted(__self__.unseen_fields),min(10,len(__self__.unseen_fields))):
+                    single_map = __self__.build_single_map({'x_gem':field[0],'y_gem':field[1],'ttl':1})
+                    full_map += single_map
+            else:
+                __self__.log('No unseen fields, exploring least recently seen fields')
+                max_time_field_not_seen = max(__self__.last_seen_fields.values())
+                relevant_fields = [field for field,not_seen in __self__.last_seen_fields.items() if not_seen == max_time_field_not_seen]
+                if __self__.current_target not in relevant_fields or __self__.target_not_reached_counter <=0:
+                    __self__.current_target = random.choice(relevant_fields)
+                __self__.target_not_reached_counter = 10
+                single_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':1})
+                full_map += single_map
         #Set all old positions to 0, to avoid going in circles
         for pos in __self__.last_positions:
             full_map[pos[1],pos[0]] = 0

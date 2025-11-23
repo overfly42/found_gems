@@ -23,4 +23,10 @@ ruby runner.rb  --seed 1az6qhq ..\found_gems\ 2222
     ruby runner.rb  --seed p3q46m ..\found_gems\   -> 7355  -> 11684
     ruby runner.rb  --seed 14j6cso ..\found_gems\  7594 -> 10130
 
-    ruby runner.rb --seed 1x34eye --profile ..\found-gems\   
+    ruby runner.rb --seed 1x34eye --profile ..\found-gems\ 
+2025-11-23  Platz 23
+    ruby runner.rb --seed rtxu4r ..\found_gems\    848 ->  8064
+    ruby runner.rb --seed 15e0drm ..\found_gems\ 12927 -> 11989
+    ruby runner.rb --seed 1vggh6p ..\found_gems\  6207 ->  13458
+
+    ruby runner.rb --seed kjgfxx --profile ..\found_gems\   93632 -> 166997
