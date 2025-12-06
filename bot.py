@@ -8,7 +8,7 @@ from uuid import uuid4
 DEBUG = False
 MAX_DISTANCE = 2
 DECAY_FACTOR = 0.8
-NUMBER_OF_LAST_POSITIONS = 5
+NUMBER_OF_LAST_POSITIONS = 2
 OPPONENT_PENALTY_TTL = 5
 
 
@@ -33,6 +33,7 @@ class gem_searcher:
         __self__.unseen_fields = set()
         __self__.void_fields = set()
         __self__.all_fields = set()
+        __self__.view_positions = dict()
         if DEBUG:
             import os
             os.makedirs(__self__.folder,exist_ok=True)
@@ -43,6 +44,9 @@ class gem_searcher:
 
             __self__.analyse_json(data)
             map = __self__.build_map()
+            if DEBUG:
+                np.savetxt(f"{__self__.folder}/data_{__self__.current_tick:05}.csv",map,delimiter=";")
+            
             move = __self__.select_move(map)
             print(move, flush=True)
 
@@ -87,6 +91,9 @@ class gem_searcher:
             __self__.last_seen_fields[field] = 0 if field in __self__.visible_fields else __self__.last_seen_fields[field] + 1
         for field in __self__.visible_fields:
             __self__.last_seen_fields[field] = 0
+            data_element = __self__.view_positions.get(field,set())
+            data_element.add((data['bot'][0],data['bot'][1]))
+            __self__.view_positions[field] = data_element
         __self__.unseen_fields = set(__self__.all_fields - set(__self__.last_seen_fields.keys()) - __self__.known_walls - __self__.void_fields)
         __self__.log(f'Unseen fields: {len(__self__.unseen_fields)}, void fields: {len(__self__.void_fields)}')
         if len(__self__.last_positions) > NUMBER_OF_LAST_POSITIONS:
@@ -182,8 +189,14 @@ class gem_searcher:
                 if __self__.current_target not in relevant_fields or __self__.target_not_reached_counter <=0:
                     __self__.current_target = random.choice(relevant_fields)
                 __self__.target_not_reached_counter = 10
-                single_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':1})
-                full_map += single_map
+                view_positions = __self__.view_positions.get(__self__.current_target,None)
+                if not view_positions:
+                    single_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':1})
+                    full_map += single_map
+                else:
+                    __self__.log(f'Using view positions {len(view_positions)} to reach target at {__self__.current_target}')
+                    for pos in list(view_positions)[0:min(len(view_positions),10)]:
+                        full_map += __self__.build_single_map({'x_gem':pos[0],'y_gem':pos[1],'ttl':1})
         #Set all old positions to 0, to avoid going in circles
         for pos in __self__.last_positions:
             full_map[pos[1],pos[0]] = 0
