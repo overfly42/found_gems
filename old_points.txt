@@ -12,14 +12,14 @@ Stage 1
 ruby runner.rb  --seed ykhwa5 ..\found_gems\ 1903
 ruby runner.rb  --seed 1az6qhq ..\found_gems\ 2222
 2025-11-19
-    ruby runner.rb  --seed 1k2jehv ..\found_gems\  807  -> 5727
+    ruby runner.rb  --seed 1k2jehv ..\found_gems\  807  -> 5727 -> 10187
     ruby runner.rb  --seed 168xr6 ..\found_gems\  2554  -> 5323
     ruby runner.rb  --seed 11zrije ..\found_gems\ 1210  -> 1933 -> 
     ruby runner.rb  --seed p3q46m ..\found_gems\   561  -> 2294 -> 3847 -> 3692 -> 4288
 2025-11-20 Calulate around walls
     ruby runner.rb  --seed 1k2jehv ..\found_gems\  -> 7655  -> 8691
     ruby runner.rb  --seed 168xr6 ..\found_gems\   -> 6876  -> 12388
-    ruby runner.rb  --seed 11zrije ..\found_gems\  -> 1819
+    ruby runner.rb  --seed 11zrije ..\found_gems\  -> 1819  ->  5332
     ruby runner.rb  --seed p3q46m ..\found_gems\   -> 7355  -> 11684
     ruby runner.rb  --seed 14j6cso ..\found_gems\  7594 -> 10130
 
@@ -30,3 +30,37 @@ ruby runner.rb  --seed 1az6qhq ..\found_gems\ 2222
     ruby runner.rb --seed 1vggh6p ..\found_gems\  6207 ->  13458
 
     ruby runner.rb --seed kjgfxx --profile ..\found_gems\   93632 -> 166997
+2025-12-06 Platz 18
+    ruby runner.rb  --seed 4tcm3w ..\found_gems\    5699 -> 5706 -> 
+    ruby runner.rb  --seed 1dtbxvp ..\found_gems\   11055 -> 11357
+     ruby runner.rb  --seed 1lo0d06 ..\found_gems\  10819 -> 12354
+2025-12-18
+    ruby runner.rb  --seed 1d75iaf ..\found_gems\   9254 -> 10178 (mit doppelten wegen)
+    ruby runner.rb --seed 1c9web4 --profile ..\found_gems\
+
+2025-12-23
+    Zwei Verschiedene Versionen implementiert
+    Seed                                                old         new
+    ruby runner.rb  --seed 3e3jak ..\found_gems\         7773        7863
+    ruby runner.rb  --seed 1l8p8ms ..\found_gems\        9747        8933   --> Schlechter
+    ruby runner.rb  --seed t6fwnz  ..\found_gems\       13251       13710
+    ruby runner.rb  --seed 1ic1vs5 ..\found_gems\       11530       11368   --> Schlechter
+    ruby runner.rb  --seed 3qjr43  ..\found_gems\        9406        9414
+    ruby runner.rb  --seed 1gf91gu ..\found_gems\       10467       10388   --> Schlechter
+    ruby runner.rb  --seed 906hx4 ..\found_gems\        13804       13808
+    ruby runner.rb  --seed 1ot0efr ..\found_gems\       18606       
+    ruby runner.rb  --seed k1orcv ..\found_gems\        11141
+    ruby runner.rb  --seed 10rk867 ..\found_gems\        9588
+    ruby runner.rb  --seed 12nsrf4 ..\found_gems\       10361
+    ruby runner.rb  --seed 1dcmbgj ..\found_gems\       10624
+    ruby runner.rb  --seed 12wpa4b ..\found_gems\        5903
+    ruby runner.rb  --seed vc3srv ..\found_gems\         5952
+    ruby runner.rb  --seed 1d75iaf ..\found_gems\
+    ruby runner.rb  --seed 1d75iaf ..\found_gems\
+    ruby runner.rb  --seed 1d75iaf ..\found_gems\
+    ruby runner.rb  --seed 1d75iaf ..\found_gems\
+    ruby runner.rb  --seed 1d75iaf ..\found_gems\
+    ruby runner.rb  --seed 1d75iaf ..\found_gems\
+    ruby runner.rb  --seed 1d75iaf ..\found_gems\
+    ruby runner.rb --seed 1c9web4 --profile ..\found_gems\      197210    193778
+    ruby runner.rb --seed cypsne --profile ..\found_gems\       212165    216554         

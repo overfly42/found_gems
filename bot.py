@@ -235,7 +235,7 @@ class gem_bot:
         Gem Bot is a second implementation for the game hidden gems.
     '''
     def __init__(__self__):
-        __self__.current_log_level = log_level.INFO
+        __self__.current_log_level = log_level.ERROR
         __self__.first_tick = True
         __self__.current_tick = 0
         __self__.current_pos = (0,0)
