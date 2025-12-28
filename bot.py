@@ -324,7 +324,34 @@ class gem_bot:
             __self__.log(f'Found gem at {gem["position"]} with ttl {gem["ttl"]}',log_level.INFO)
             __self__.gems[tuple(gem['position'])] = gem['ttl']
     #endregion
+    def __get_explorartion_fields(__self__)->list[tuple[int,int]]:
+        __self__.log('No gems visible, adding nearest unseen field as target')
+        distances = list()
+        for x in __self__.unseen_fields:
+            distances.append({'loc':x,'dist':__self__.calc_distance(x,__self__.current_pos)}) 
+        distances.sort(key=lambda a: a['dist'])
+        relevant_elements = list()
+        for i in range(min(20,len(distances))):
+            relevant_elements.append(distances[i]['loc'])
+        return relevant_elements
+    def __get_patrol_fields(__self__)->list[tuple[int,int]]:
+        # Select field that is last recently seen
+        # max_time_field_not_seen = max(__self__.last_seen_fields.values())
+        max_time_field_not_seen = sorted(__self__.last_seen_fields.values(),reverse=True)
+        max_time_field_not_seen = max_time_field_not_seen[0:min(7,len(max_time_field_not_seen))]
 
+        relevant_fields = [field for field,not_seen in __self__.last_seen_fields.items() if not_seen in max_time_field_not_seen]
+        #Select next field
+        target_distances = __self__.build_field(__self__.current_pos,target_value=1,decay=None)
+#        max_dist = max(target_distances.flatten())
+#        max_anchors = max([len(__self__.anchor_views.get(x,set())) for x in relevant_fields])
+#        relevant_field = sorted(relevant_fields,key=lambda x:target_distances[x[1],x[0]]/max_dist + max_anchors/max(1,len(__self__.anchor_views.get(x,set()))))
+        relevant_field = sorted(relevant_fields,key=lambda x:target_distances[x[1],x[0]])
+#        relevant_field = sorted(relevant_fields,key=lambda x:__self__.calc_distance(x,__self__.current_pos))
+        relevant_elements = list()
+        for i in range(min(3,len(relevant_field))):
+            relevant_elements.append(relevant_field[i])
+        return relevant_elements
     def plan(__self__):
         relevant_elements = list()
         relevant_values = list()
@@ -338,22 +365,14 @@ class gem_bot:
         # Add next unseen field, if no gem exists
         __self__.log(f'Gems: {len(__self__.gems)}, Unseen fields: {len(__self__.unseen_fields)}',log_level.INFO)
         if len(__self__.gems) == 0 and len(__self__.unseen_fields)>0:
-            __self__.log('No gems visible, adding nearest unseen field as target')
-            distances = list()
-            for x in __self__.unseen_fields:
-                distances.append({'loc':x,'dist':__self__.calc_distance(x,__self__.current_pos)}) 
-            distances.sort(key=lambda a: a['dist'])
-            for i in range(min(20,len(distances))):
-                relevant_elements.append(distances[i]['loc'])
-                relevant_values.append(1)
-        elif len(__self__.gems) == 0 and len(__self__.unseen_fields) == 0:
-            # Select field that is last recently seen
-            max_time_field_not_seen = max(__self__.last_seen_fields.values())
-            relevant_fields = [field for field,not_seen in __self__.last_seen_fields.items() if not_seen == max_time_field_not_seen]
-            #Select next field
-            relevant_field = sorted(relevant_fields,key=lambda x:__self__.calc_distance(x,__self__.current_pos))
-            for i in range(min(3,len(relevant_field))):
-                relevant_elements.append(relevant_field[i])
+            unseen_elements = __self__.__get_explorartion_fields()
+            for x in unseen_elements:
+                relevant_elements.append(x)
+                relevant_values.append(10)
+        # elif len(__self__.gems) == 0 and len(__self__.unseen_fields) == 0:
+        patrol_elements = __self__.__get_patrol_fields()
+        for x in patrol_elements:
+            relevant_elements.append(x)
             relevant_values.append(1)
         __self__.log(f'Relevant elements: {relevant_elements}',log_level.INFO)
 #        if __self__.field_changed or __self__.field is None:
