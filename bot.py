@@ -15,7 +15,9 @@ MAX_DISTANCE = 2
 DECAY_FACTOR = 0.8
 NUMBER_OF_LAST_POSITIONS = 0
 OPPONENT_PENALTY_TTL = 5
-
+NOT_SEEN_FIELDS = 7
+NOT_SEEN_THREASHOLD = 100
+EXPLORATION_FIELD_VALUE = 50
 
 random.seed(1)
 class gem_searcher:
@@ -251,7 +253,7 @@ class gem_bot:
         __self__.opponents = set()
         __self__.gems = dict()   
         __self__.floor_tiles = set()
-
+        __self__.current_targets = list()
     def main(__self__):
         for line in sys.stdin:
             data = json.loads(line) #
@@ -265,6 +267,7 @@ class gem_bot:
         __self__.current_tick = data.get("tick")
         __self__.current_pos = (data['bot'][0],data['bot'][1])
         __self__.field_changed = False
+        __self__.__analyse_bot()
         __self__.__analyse_walls(data.get("wall",[]))
         __self__.__analyse_floor(data.get("floor",[]))
         __self__.__analyse_openents(data.get("visible_bots",[]))
@@ -280,6 +283,14 @@ class gem_bot:
         for x in range(__self__.width):
             for y in range(__self__.height):
                 __self__.unseen_fields.add((x,y))
+    def __analyse_bot(__self__):
+        # Checks the bot position if it affects any changes in plan
+        if __self__.current_pos in __self__.gems:
+            __self__.log(f'Collected gem at {__self__.current_pos}',log_level.INFO)
+            __self__.field_changed = True
+        if __self__.current_pos in __self__.current_targets:
+             __self__.log(f'Reached target at {__self__.current_pos}',log_level.INFO)
+             __self__.field_changed = True
     def __analyse_walls(__self__,walls:list):
         for wall in walls:
             if __self__.walls[wall[1],wall[0]] != 0:
@@ -311,6 +322,7 @@ class gem_bot:
             __self__.field_changed = True
             __self__.opponents.add((opp['position'][0],opp['position'][1]))
     def __analyse_gems(__self__,gems:list):
+        temp_gem_keys = list(__self__.gems.keys())
         #Remove Gems from visible positions
         for visible_field in __self__.anchor_views[__self__.current_pos]:
             __self__.gems.pop(visible_field,None)
@@ -321,8 +333,11 @@ class gem_bot:
             __self__.gems[k] = v - 1 #Decrease value by 1 point
         #Add new Gems
         for gem in gems:
-            __self__.log(f'Found gem at {gem["position"]} with ttl {gem["ttl"]}',log_level.INFO)
-            __self__.gems[tuple(gem['position'])] = gem['ttl']
+            gem_pos = tuple(gem['position'])
+            __self__.log(f'Found gem at {gem_pos} with ttl {gem["ttl"]}',log_level.INFO)
+            __self__.gems[gem_pos] = gem['ttl']
+            if gem_pos not in temp_gem_keys:
+                __self__.field_changed = True
     #endregion
     def __get_explorartion_fields(__self__)->list[tuple[int,int]]:
         __self__.log('No gems visible, adding nearest unseen field as target')
@@ -336,23 +351,42 @@ class gem_bot:
         return relevant_elements
     def __get_patrol_fields(__self__)->list[tuple[int,int]]:
         # Select field that is last recently seen
-        # max_time_field_not_seen = max(__self__.last_seen_fields.values())
         max_time_field_not_seen = sorted(__self__.last_seen_fields.values(),reverse=True)
-        max_time_field_not_seen = max_time_field_not_seen[0:min(7,len(max_time_field_not_seen))]
+        max_time_field_not_seen = max_time_field_not_seen[0:min(NOT_SEEN_FIELDS,len(max_time_field_not_seen))]
+        __self__.log(f'Max time field not seen: {max_time_field_not_seen}',log_level.INFO)
+        max_field = {field for field,not_seen in __self__.last_seen_fields.items() if not_seen == max_time_field_not_seen[0]}.pop()
+        __self__.log(f'Fields not seen for max time: {max_field}',log_level.INFO)
 
-        relevant_fields = [field for field,not_seen in __self__.last_seen_fields.items() if not_seen in max_time_field_not_seen]
+        relevant_fields = {field for field,not_seen in __self__.last_seen_fields.items() if not_seen in max_time_field_not_seen}
+        __self__.log(f'Patrol fields: {len(relevant_fields)}',log_level.DEBUG)
         #Select next field
-        target_distances = __self__.build_field(__self__.current_pos,target_value=1,decay=None)
-#        max_dist = max(target_distances.flatten())
-#        max_anchors = max([len(__self__.anchor_views.get(x,set())) for x in relevant_fields])
-#        relevant_field = sorted(relevant_fields,key=lambda x:target_distances[x[1],x[0]]/max_dist + max_anchors/max(1,len(__self__.anchor_views.get(x,set()))))
-        relevant_field = sorted(relevant_fields,key=lambda x:target_distances[x[1],x[0]])
-#        relevant_field = sorted(relevant_fields,key=lambda x:__self__.calc_distance(x,__self__.current_pos))
-        relevant_elements = list()
-        for i in range(min(3,len(relevant_field))):
-            relevant_elements.append(relevant_field[i])
+        # target_distances = __self__.build_field(__self__.current_pos,target_value=1,decay=None)
+        # # Select by distance to bot
+        # relevant_field = sorted(relevant_fields,key=lambda x:target_distances[x[1],x[0]])
+        # relevant_elements = list()
+        # for i in range(min(3,len(relevant_field))):
+        #     relevant_elements.append(relevant_field[i])
+        # Select by maximum number of fields to see
+        anchor_fields = {field:len(value & relevant_fields) for field,value in __self__.anchor_views.items() if len(value & relevant_fields) > 0}
+        __self__.log(f'Anchor fields for patrol: {len(anchor_fields)}',log_level.DEBUG)
+        max_fields = sorted(anchor_fields.values(),reverse=True)[0]
+        anchor_fields = [field for field,value in anchor_fields.items() if value == max_fields]
+        relevant_elements = list(anchor_fields)
+        __self__.log(f'Selected patrol fields: {len(relevant_elements)}',log_level.DEBUG)
+        #In case the max not seen field outrages the threashhold, add the next field, that sees it, if necessary
+        if __self__.last_seen_fields.get(max_field,0) > NOT_SEEN_THREASHOLD:
+            selected_anchors = [field for field in anchor_fields if max_field in __self__.anchor_views.get(field,set())]
+            if not selected_anchors:
+                #Find all anchors looking at this field
+                all_anchors = [field for field,value in __self__.anchor_views.items() if max_field in value]
+                target_distances = __self__.build_field(__self__.current_pos,target_value=1,decay=None)
+                sorted_anchors = sorted(all_anchors,key=lambda x:target_distances[x[1],x[0]])
+                relevant_elements.append(sorted_anchors[0])
         return relevant_elements
     def plan(__self__):
+        if not __self__.field_changed:
+            __self__.log('Field has not changed, reusing old field',log_level.INFO)
+            return
         relevant_elements = list()
         relevant_values = list()
         # Add Gems and Opoennts as targets
@@ -368,13 +402,15 @@ class gem_bot:
             unseen_elements = __self__.__get_explorartion_fields()
             for x in unseen_elements:
                 relevant_elements.append(x)
-                relevant_values.append(10)
+                relevant_values.append(EXPLORATION_FIELD_VALUE)
         # elif len(__self__.gems) == 0 and len(__self__.unseen_fields) == 0:
         patrol_elements = __self__.__get_patrol_fields()
         for x in patrol_elements:
             relevant_elements.append(x)
-            relevant_values.append(1)
+            relevant_values.append(max(1,__self__.last_seen_fields.get(x,1)))
+            # relevant_values.append(1)
         __self__.log(f'Relevant elements: {relevant_elements}',log_level.INFO)
+        __self__.current_targets = relevant_elements
 #        if __self__.field_changed or __self__.field is None:
             # with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
             #     results = list(executor.map(__self__.build_field,relevant_elements,relevant_values))
