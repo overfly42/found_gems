@@ -14,10 +14,13 @@ DEBUG = False
 MAX_DISTANCE = 2
 DECAY_FACTOR = 0.8
 NUMBER_OF_LAST_POSITIONS = 0
-OPPONENT_PENALTY_TTL = 5
+OPPONENT_PENALTY_TTL = 0.01
 NOT_SEEN_FIELDS = 7
 NOT_SEEN_THREASHOLD = 100
 EXPLORATION_FIELD_VALUE = 50
+CYCLING_RELEVANT_FIELDS = 7
+MAX_CYCLING_OCCOURENCES = 3
+STEP_REDUCE = 20
 
 random.seed(1)
 class gem_searcher:
@@ -237,7 +240,7 @@ class gem_bot:
         Gem Bot is a second implementation for the game hidden gems.
     '''
     def __init__(__self__):
-        __self__.current_log_level = log_level.ERROR
+        __self__.current_log_level = log_level.GAME
         __self__.first_tick = True
         __self__.current_tick = 0
         __self__.current_pos = (0,0)
@@ -254,6 +257,8 @@ class gem_bot:
         __self__.gems = dict()   
         __self__.floor_tiles = set()
         __self__.current_targets = list()
+        __self__.last_position = None
+        __self__.path_history = []
     def main(__self__):
         for line in sys.stdin:
             data = json.loads(line) #
@@ -291,6 +296,11 @@ class gem_bot:
         if __self__.current_pos in __self__.current_targets:
              __self__.log(f'Reached target at {__self__.current_pos}',log_level.INFO)
              __self__.field_changed = True
+        if __self__.last_position == __self__.current_pos:
+            __self__.log(f'Bot did not move from {__self__.current_pos}',log_level.WARNING)
+            __self__.field_changed = True
+        __self__.last_position = __self__.current_pos
+        __self__.path_history.append(__self__.current_pos)
     def __analyse_walls(__self__,walls:list):
         for wall in walls:
             if __self__.walls[wall[1],wall[0]] != 0:
@@ -315,12 +325,23 @@ class gem_bot:
                 __self__.unseen_fields.discard(tile)
         #Update when a field was seen last
         __self__.last_seen_fields = {pos:0 if pos in anchor else __self__.last_seen_fields.get(pos,0)+1 for pos in __self__.floor_tiles}
+        #Decrease time, in case robot is running cycles, only relevant if an oponent is there
+        if __self__.opponents:
+            max_time = max (__self__.last_seen_fields.values())
+            last_field_list = __self__.path_history[-min(__self__.current_tick,CYCLING_RELEVANT_FIELDS):]
+            last_field_set = set(last_field_list)
+            last_field_dict = [last_field_list.count(field) for field in last_field_set]
+            if any([occourence > MAX_CYCLING_OCCOURENCES for occourence in last_field_dict]):
+                __self__.log(f'Detected cycling in last path: {last_field_list}',log_level.WARNING)
+                for cycle_field in [field for field,value in __self__.last_seen_fields.items() if value == max_time]:
+                    __self__.last_seen_fields[cycle_field] -= min(STEP_REDUCE, __self__.last_seen_fields[cycle_field])
+                    __self__.log(f'Reduced not seen time for field {cycle_field} to {__self__.last_seen_fields[cycle_field]}',log_level.INFO)
     def __analyse_openents(__self__,opponents:list):
-        if opponents:
-            __self__.opponents.clear()
+        __self__.opponents.clear()
         for opp in opponents:
             __self__.field_changed = True
             __self__.opponents.add((opp['position'][0],opp['position'][1]))
+            __self__.log(f'Found opponent at {opp["position"]}',log_level.INFO)
     def __analyse_gems(__self__,gems:list):
         temp_gem_keys = list(__self__.gems.keys())
         #Remove Gems from visible positions
@@ -355,17 +376,11 @@ class gem_bot:
         max_time_field_not_seen = max_time_field_not_seen[0:min(NOT_SEEN_FIELDS,len(max_time_field_not_seen))]
         __self__.log(f'Max time field not seen: {max_time_field_not_seen}',log_level.INFO)
         max_field = {field for field,not_seen in __self__.last_seen_fields.items() if not_seen == max_time_field_not_seen[0]}.pop()
-        __self__.log(f'Fields not seen for max time: {max_field}',log_level.INFO)
-
+        __self__.log(f'Fields not seen for max time: {max_field} for {__self__.last_seen_fields[max_field]} ticks',log_level.INFO)
+        #Reduce current target if cycling
         relevant_fields = {field for field,not_seen in __self__.last_seen_fields.items() if not_seen in max_time_field_not_seen}
         __self__.log(f'Patrol fields: {len(relevant_fields)}',log_level.DEBUG)
         #Select next field
-        # target_distances = __self__.build_field(__self__.current_pos,target_value=1,decay=None)
-        # # Select by distance to bot
-        # relevant_field = sorted(relevant_fields,key=lambda x:target_distances[x[1],x[0]])
-        # relevant_elements = list()
-        # for i in range(min(3,len(relevant_field))):
-        #     relevant_elements.append(relevant_field[i])
         # Select by maximum number of fields to see
         anchor_fields = {field:len(value & relevant_fields) for field,value in __self__.anchor_views.items() if len(value & relevant_fields) > 0}
         __self__.log(f'Anchor fields for patrol: {len(anchor_fields)}',log_level.DEBUG)
@@ -470,6 +485,21 @@ class gem_bot:
         else:
             map = target_value * map
         return map
+    def hightlight_targets(__self__)->str:
+        if __self__.current_log_level == log_level.GAME:
+            return ''
+        maps = {}
+        hightlight = []
+        maps['highlight'] = hightlight
+        for target in __self__.current_targets:
+            if target in __self__.gems:
+                color = '#FFFF00'
+            elif target in __self__.opponents:
+                color = '#FF0000'
+            else:
+                color = '#00FF00'
+            hightlight.append([target[0],target[1],color])
+        return ' '+json.dumps(maps)
     def select_move(__self__)->str:
         '''
             gathers the four values around the bot, and its values. selects the field with the highest value as next move
@@ -481,12 +511,32 @@ class gem_bot:
         #Map is indexed [y,x] Select the possible next steps
         with open("debug_map.csv","w") as f:
             np.savetxt(f,map,delimiter=";")
-        directions['W']=map[bot_y,max(bot_x-1,0)]
-        directions['E']=map[bot_y,min(bot_x+1,__self__.width-1)]
-        directions['N']=map[max(bot_y-1,0),bot_x]
-        directions['S']=map[min(bot_y+1,__self__.height),bot_x]
-        __self__.log(f'Bot position: {bot_x},{bot_y} {directions}')    
-        print(max(directions,key=directions.get),flush=True)
+        #region west
+        w = (bot_y,max(bot_x-1,0))
+        if __self__.walls [w[0],w[1]] > 0 and (w[1],w[0]) not in __self__.opponents:
+            directions['W']=map[w[0],w[1]]
+        #endregion
+        #region east
+        e = (bot_y,min(bot_x+1,__self__.width-1))
+        if __self__.walls [e[0],e[1]] > 0 and (e[1],e[0]) not in __self__.opponents:
+            directions['E']=map[e[0],e[1]]
+        #endregion
+        #region north
+        n = (max(bot_y-1,0),bot_x)
+        if __self__.walls [n[0],n[1]] > 0 and (n[1],n[0]) not in __self__.opponents:
+            directions['N']=map[n[0],n[1]]
+        #endregion
+        s = (min(bot_y+1,__self__.height),bot_x)
+        if __self__.walls [s[0],s[1]] > 0 and (s[1],s[0]) not in __self__.opponents:
+            directions['S']=map[s[0],s[1]]
+        #endregion
+        __self__.log(f'Bot position: {bot_x},{bot_y} {directions}')  
+        if not directions:# Fallback if bot is surrounded
+            direction = 'WAIT'
+        else:
+            direction = max(directions,key=directions.get)
+        highlight = __self__.hightlight_targets()
+        print(f'{direction}{highlight}',flush=True)
     # Helper
     def log(__self__,message:str,log_level_value:log_level=log_level.INFO):
         '''
