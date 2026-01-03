@@ -240,7 +240,7 @@ class gem_bot:
         Gem Bot is a second implementation for the game hidden gems.
     '''
     def __init__(__self__):
-        __self__.current_log_level = log_level.GAME
+        __self__.current_log_level = log_level.WARNING
         __self__.first_tick = True
         __self__.current_tick = 0
         __self__.current_pos = (0,0)
@@ -259,6 +259,7 @@ class gem_bot:
         __self__.current_targets = list()
         __self__.last_position = None
         __self__.path_history = []
+        __self__.cycling_detected = False
     def main(__self__):
         for line in sys.stdin:
             data = json.loads(line) #
@@ -326,6 +327,7 @@ class gem_bot:
         #Update when a field was seen last
         __self__.last_seen_fields = {pos:0 if pos in anchor else __self__.last_seen_fields.get(pos,0)+1 for pos in __self__.floor_tiles}
         #Decrease time, in case robot is running cycles, only relevant if an oponent is there
+        __self__.cycling_detected = False
         if __self__.opponents:
             max_time = max (__self__.last_seen_fields.values())
             last_field_list = __self__.path_history[-min(__self__.current_tick,CYCLING_RELEVANT_FIELDS):]
@@ -333,6 +335,7 @@ class gem_bot:
             last_field_dict = [last_field_list.count(field) for field in last_field_set]
             if any([occourence > MAX_CYCLING_OCCOURENCES for occourence in last_field_dict]):
                 __self__.log(f'Detected cycling in last path: {last_field_list}',log_level.WARNING)
+                __self__.cycling_detected = True
                 for cycle_field in [field for field,value in __self__.last_seen_fields.items() if value == max_time]:
                     __self__.last_seen_fields[cycle_field] -= min(STEP_REDUCE, __self__.last_seen_fields[cycle_field])
                     __self__.log(f'Reduced not seen time for field {cycle_field} to {__self__.last_seen_fields[cycle_field]}',log_level.INFO)
@@ -413,7 +416,8 @@ class gem_bot:
             relevant_values.append(-abs(OPPONENT_PENALTY_TTL))
         # Add next unseen field, if no gem exists
         __self__.log(f'Gems: {len(__self__.gems)}, Unseen fields: {len(__self__.unseen_fields)}',log_level.INFO)
-        if len(__self__.gems) == 0 and len(__self__.unseen_fields)>0:
+        # In case a cycle is detected, it might not be possible to explore right now.
+        if len(__self__.gems) == 0 and len(__self__.unseen_fields)>0 and not __self__.cycling_detected:
             unseen_elements = __self__.__get_explorartion_fields()
             for x in unseen_elements:
                 relevant_elements.append(x)
