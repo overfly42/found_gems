@@ -63,4 +63,43 @@ ruby runner.rb  --seed 1az6qhq ..\found_gems\ 2222
     ruby runner.rb  --seed 1d75iaf ..\found_gems\
     ruby runner.rb  --seed 1d75iaf ..\found_gems\
     ruby runner.rb --seed 1c9web4 --profile ..\found_gems\      197210    193778
-    ruby runner.rb --seed cypsne --profile ..\found_gems\       212165    216554         
+    ruby runner.rb --seed cypsne --profile ..\found_gems\       212165    216554    
+2025-12-26
+    ruby runner.rb  --seed 1d7ap45 ..\found_gems\                13705     13708
+    ruby runner.rb --seed 1a4lbeh  --profile ..\found_gems\      204779    203341
+2025-12-27
+    ruby runner.rb  --seed yuf9py ..\found_gems\                3 last seen / 12822
+                                                                1 last seen / 13679
+                                                                4 last seen / 13737
+    ruby runner.rb  --seed 1t1foy1 ..\found_gems\               1 last seen / 10798
+                                                                4 last seen / 10825
+    ruby runner.rb --seed 1tagas2  --profile ..\found_gems\
+                                    
+2025-12-30
+    ruby runner.rb --seed yzi0p1 ..\found_gems\             11276   13886
+    ruby runner.rb --seed 15y6jq9 --profile ..\found_gems\  211465  209966  --> 226773
+    ruby runner.rb --seed 1a4lbeh  --profile ..\found_gems\ 204779  203341  --> 199254
+    ruby runner.rb --seed dl2z5l  ..\found_gems\              6849
+    ruby runner.rb --seed 7056xa  ..\found_gems\              5677
+    ruby runner.rb --seed 1vj3xt7  ..\found_gems\             10976
+    ruby runner.rb --seed 1gqtwtc  ..\found_gems\             10631
+    ruby runner.rb --seed 4rr532   ..\found_gems\             12764
+    ruby runner.rb --seed 1qkpm53  ..\found_gems\             12776
+    ruby runner.rb --seed 3estu8   ..\found_gems\             13392
+    ruby runner.rb --seed 1ydq2rr  ..\found_gems\             10061
+    ruby runner.rb --seed 9vn8cv   ..\found_gems\             10690
+    ruby runner.rb --seed 1jlucdi  ..\found_gems\             12718
+    ruby runner.rb --seed 1uo8mhl  ..\found_gems\             14231 16704   --> 17096
+    ruby runner.rb --seed 1x4fs48  ..\found_gems\             12368
+    ruby runner.rb --seed wta9ak   ..\found_gems\             13205
+    ruby runner.rb --seed f3z8g0   ..\found_gems\             8838
+    ruby runner.rb --seed 16fy415  ..\found_gems\             8452
+    ruby runner.rb --seed 113kj2g  ..\found_gems\             4764  4146 --> 3837   --> 4177
+    ruby runner.rb --seed gp4heg   ..\found_gems\             10258
+    ruby runner.rb --seed 1n64648  ..\found_gems\             10741
+    ruby runner.rb --seed 1c0l339  ..\found_gems\             10798
+
+2026-01-03 Sparing
+    ruby runner.rb --seed mk17vd6b2   ..\found_gems\   ..\found_gems_old
+2026-01-04
+    ruby runner.rb --seed 3jsl7ib3m   ..\found_gems\    19097   20144

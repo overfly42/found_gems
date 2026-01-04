@@ -13,12 +13,13 @@ from enum import Enum
 DEBUG = False
 MAX_DISTANCE = 2
 DECAY_FACTOR = 0.8
+DECAY_CHANGE = 0.9
 NUMBER_OF_LAST_POSITIONS = 0
 OPPONENT_PENALTY_TTL = 0.01
 NOT_SEEN_FIELDS = 7
 NOT_SEEN_THREASHOLD = 100
 EXPLORATION_FIELD_VALUE = 50
-CYCLING_RELEVANT_FIELDS = 7
+CYCLING_RELEVANT_FIELDS = 9
 MAX_CYCLING_OCCOURENCES = 3
 STEP_REDUCE = 20
 
@@ -240,7 +241,7 @@ class gem_bot:
         Gem Bot is a second implementation for the game hidden gems.
     '''
     def __init__(__self__):
-        __self__.current_log_level = log_level.WARNING
+        __self__.current_log_level = log_level.GAME
         __self__.first_tick = True
         __self__.current_tick = 0
         __self__.current_pos = (0,0)
@@ -260,6 +261,7 @@ class gem_bot:
         __self__.last_position = None
         __self__.path_history = []
         __self__.cycling_detected = False
+        __self__.decay_factor = DECAY_FACTOR
     def main(__self__):
         for line in sys.stdin:
             data = json.loads(line) #
@@ -328,17 +330,24 @@ class gem_bot:
         __self__.last_seen_fields = {pos:0 if pos in anchor else __self__.last_seen_fields.get(pos,0)+1 for pos in __self__.floor_tiles}
         #Decrease time, in case robot is running cycles, only relevant if an oponent is there
         __self__.cycling_detected = False
-        if __self__.opponents:
-            max_time = max (__self__.last_seen_fields.values())
-            last_field_list = __self__.path_history[-min(__self__.current_tick,CYCLING_RELEVANT_FIELDS):]
-            last_field_set = set(last_field_list)
-            last_field_dict = [last_field_list.count(field) for field in last_field_set]
-            if any([occourence > MAX_CYCLING_OCCOURENCES for occourence in last_field_dict]):
-                __self__.log(f'Detected cycling in last path: {last_field_list}',log_level.WARNING)
-                __self__.cycling_detected = True
-                for cycle_field in [field for field,value in __self__.last_seen_fields.items() if value == max_time]:
-                    __self__.last_seen_fields[cycle_field] -= min(STEP_REDUCE, __self__.last_seen_fields[cycle_field])
-                    __self__.log(f'Reduced not seen time for field {cycle_field} to {__self__.last_seen_fields[cycle_field]}',log_level.INFO)
+#        if __self__.opponents:
+        max_time = max (__self__.last_seen_fields.values())
+        last_field_list = __self__.path_history[-min(__self__.current_tick,CYCLING_RELEVANT_FIELDS):]
+        last_field_set = set(last_field_list)
+        last_field_dict = [last_field_list.count(field) for field in last_field_set]
+        if any([occourence > MAX_CYCLING_OCCOURENCES for occourence in last_field_dict]):
+            __self__.log(f'Detected cycling in last path: {last_field_list}',log_level.WARNING)
+            __self__.cycling_detected = True
+        if __self__.cycling_detected:
+            __self__.decay_factor = __self__.decay_factor * DECAY_CHANGE
+            __self__.field_changed = True
+            __self__.log(f'Cycling detected, reduced decay factor to {__self__.decay_factor}',log_level.INFO)
+            for cycle_field in [field for field,value in __self__.last_seen_fields.items() if value == max_time]:
+                __self__.last_seen_fields[cycle_field] -= min(STEP_REDUCE, __self__.last_seen_fields[cycle_field])
+                __self__.log(f'Reduced not seen time for field {cycle_field} to {__self__.last_seen_fields[cycle_field]}',log_level.INFO)
+        else:
+            __self__.decay_factor = DECAY_FACTOR
+            __self__.log(f'No cycling detected, reset decay factor to {DECAY_FACTOR}',log_level.INFO)
     def __analyse_openents(__self__,opponents:list):
         __self__.opponents.clear()
         for opp in opponents:
@@ -446,7 +455,7 @@ class gem_bot:
         else:
             raise Exception('No field could be built')
         # select way to gem
-    def build_field(__self__,target:tuple[int,int],target_value:int=1,decay:float|None=DECAY_FACTOR):
+    def build_field(__self__,target:tuple[int,int],target_value:int=1,decay:float|None='use_self'):
         '''
         This computes the whole field, abort as soon as the position of the bot is reached.
         Formula is target_value * decay**field_value
@@ -459,6 +468,8 @@ class gem_bot:
         :param decay: factor for decreasing each value on the field. if None, decay is not calculated
         :type decay: float|None
         '''
+        if decay == 'use_self':
+            decay = __self__.decay_factor
         # Creates the potential field, with all known obstacles, unknown fields are handled as available fields for this
         __self__.log(f'Building field for target at {target} with value {target_value} and decay {decay}',log_level.DEBUG)
         map = np.full((__self__.height, __self__.width), 100, dtype=np.int8)
