@@ -109,6 +109,6 @@ ruby runner.rb  --seed 1az6qhq ..\found_gems\ 2222
 
 Stage 2
 2025-01-06
-    ruby runner.rb --seed 1nsa19j2gz   ..\found_gems\   CRASH
-    ruby runner.rb --seed 14mmo1daof   ..\found_gems\   CRASH   -> 2010
+    ruby runner.rb --seed 1nsa19j2gz   ..\found_gems\   CRASH   -> 2266 -> 3107 -> 3099
+    ruby runner.rb --seed 14mmo1daof   ..\found_gems\   CRASH   -> 2010 -> 2614 -> 3592 -> 4967
     ruby runner.rb --seed qen3qfzsi   ..\found_gems\   CRASH    -> 3533

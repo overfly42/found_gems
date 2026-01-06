@@ -18,7 +18,8 @@ DECAY_CHANGE = 0.9
 OPPONENT_PENALTY_TTL = 0.01
 NOT_SEEN_FIELDS = 7
 NOT_SEEN_THREASHOLD = 100
-EXPLORATION_FIELD_VALUE = 150
+EXPLORATION_FIELD_VALUE = 100
+POSSIBLE_GEM_VALUE = 200
 CYCLING_RELEVANT_FIELDS = 9
 MAX_CYCLING_OCCOURENCES = 3
 STEP_REDUCE = 20
@@ -31,7 +32,8 @@ class log_level(Enum):
     INFO = 2
     WARNING =3
     ERROR =4
-    GAME =5
+    DEVELOP = 5
+    GAME =6
 
 class gem_bot:
     '''
@@ -43,6 +45,7 @@ class gem_bot:
         __self__.max_gems = 0
         __self__.use_signal = False
         __self__.signal_radius = 1
+        __self__.gem_duration = 1000
         #Base Config
         __self__.current_log_level = log_level.GAME
         __self__.decay_factor = DECAY_FACTOR
@@ -63,7 +66,7 @@ class gem_bot:
         __self__.last_seen_fields = dict()
         __self__.opponents = set()
         __self__.gems = dict()
-        __self__.gem_options = set()   
+        __self__.gem_options = dict()  
         __self__.floor_tiles = set()
         __self__.current_targets = list()
         __self__.last_position = None
@@ -97,6 +100,7 @@ class gem_bot:
         __self__.max_ticks = data['config']["max_ticks"]
         __self__.visibility_range = data['config']["vis_radius"]
         __self__.max_gems = data['config']["max_gems"]
+        __self__.gem_duration = data['config']["gem_ttl"]
         __self__.use_signal = data['config']["emit_signals"]
         __self__.signal_radius = data['config']["signal_radius"]
         __self__.walls = np.ones((__self__.height,__self__.width))
@@ -222,7 +226,7 @@ class gem_bot:
             gem_dist = __self__.calc_distance(gem,__self__.current_pos)
             gem_singal_strength = __self__.__singal_distance_to_signal_level(gem_dist)
             signal_level -= gem_singal_strength
-            __self__.log(f'Removed known gem at {gem} with distance {gem_singal_strength} from signal level, new signal level {signal_level}',log_level.WARNING)
+            __self__.log(f'Removed known gem at {gem} with distance {gem_singal_strength} from signal level, new signal level {signal_level}',log_level.DEBUG)
         if signal_level > 1:
             __self__.log(f'Invalid signal level {signal_level}, ignoring',log_level.ERROR)
             return
@@ -230,18 +234,17 @@ class gem_bot:
             __self__.log(f'Signal level is 0, no gem in range, abort singal analysis',log_level.INFO)
             return
         distance = __self__.__signal_singal_level_to_distance(signal_level)
-        __self__.log(f'Signal level {signal_level} indicates a gem at distance {distance}',log_level.WARNING)
+        __self__.log(f'Signal level {signal_level} indicates a gem at distance {distance}',log_level.INFO)
         #Distance is hypotenuse of an rectified triangle. Distances in x and y from bot are Karthets
         hyptoenuse = distance**2
         hyptoenuse = round(hyptoenuse)
-        __self__.log(f'Calculated hypotenuse: {hyptoenuse}',log_level.WARNING)
-        __self__.gem_options.clear()
+        __self__.log(f'Calculated hypotenuse: {hyptoenuse}',log_level.DEBUG)
         new_options = set()
         for x in range(1,int(distance)):
             y_squared = np.sqrt( hyptoenuse - x**2)
             if y_squared.is_integer():
-                __self__.log(f'Calculating possible gem positions for x distance {x} to {x**2}',log_level.WARNING)
-                __self__.log(f'Calculated y squared: {y_squared}',log_level.WARNING)
+                __self__.log(f'Calculating possible gem positions for x distance {x} to {x**2}',log_level.DEBUG)
+                __self__.log(f'Calculated y squared: {y_squared}',log_level.DEBUG)
                 y = int(y_squared)
                 new_options.add( ( __self__.current_pos[0] + x , __self__.current_pos[1] + y ) )
                 new_options.add( ( __self__.current_pos[0] + x , __self__.current_pos[1] - y ) )
@@ -249,13 +252,39 @@ class gem_bot:
                 new_options.add( ( __self__.current_pos[0] - x , __self__.current_pos[1] - y ) )
       # Check for new Options, what is not reallistic:
         for opt in new_options:
-            if opt[0] < 0 or opt[0] >= __self__.width or opt[1] < 0 or opt[1] >= __self__.height:
-                __self__.log(f'Ignoring gem option {opt}, out of bounds',log_level.WARNING)
+            singal_values = __self__.gem_options.get(opt,{}).get('singal_values',[])
+            tick_values = __self__.gem_options.get(opt,{}).get('tick_values',[])
+            singal_values.append(signal_level)
+            tick_values.append(__self__.current_tick)
+            __self__.gem_options[opt] = {
+                'signal_values': singal_values,
+                'tick_values': tick_values
+            }
+        #Clean up
+        cleanup_keys = set()
+        cleanup_keys.update(__self__.anchor_views.get(__self__.current_pos,set()))
+        timeout_tick = __self__.current_tick - __self__.gem_duration
+        for k,v in __self__.gem_options.items():
+            #Remove old options
+            tick_values = v.get('tick_values',[])
+            if any([tick < timeout_tick for tick in tick_values]):
+                cleanup_keys.add(k)
+                __self__.log(f'Removing gem option {k}, too old',log_level.DEBUG)
                 continue
-            if __self__.walls[opt[1],opt[0]] == 0:
-                __self__.log(f'Ignoring gem option {opt}, wall in the way',log_level.WARNING)
+            if k not in new_options and len(tick_values) < 2:
+                cleanup_keys.add(k)
+                __self__.log(f'Removing gem option {k}, not enough signals received yet',log_level.DEBUG)
                 continue
-            __self__.gem_options.add(opt)
+            if k[0] < 0 or k[0] >= __self__.width or k[1] < 0 or k[1] >= __self__.height:
+                cleanup_keys.add(k)
+                __self__.log(f'Ignoring gem option {k}, out of bounds',log_level.DEBUG)
+                continue
+            if __self__.walls[k[1],k[0]] == 0:
+                cleanup_keys.add(k)
+                __self__.log(f'Ignoring gem option {k}, wall in the way',log_level.DEBUG)
+                continue
+        for k in cleanup_keys:
+            __self__.gem_options.pop(k,None)
     #endregion
     def __get_explorartion_fields(__self__)->list[tuple[int,int]]:
         __self__.log('No gems visible, adding nearest unseen field as target')
@@ -308,6 +337,9 @@ class gem_bot:
         for opponent in __self__.opponents:
             relevant_elements.append(opponent)
             relevant_values.append(-abs(OPPONENT_PENALTY_TTL))
+        for opt in __self__.gem_options.keys():
+            relevant_elements.append(opt)
+            relevant_values.append(POSSIBLE_GEM_VALUE)
         # Add next unseen field, if no gem exists
         __self__.log(f'Gems: {len(__self__.gems)}, Unseen fields: {len(__self__.unseen_fields)}',log_level.INFO)
         # In case a cycle is detected, it might not be possible to explore right now.
