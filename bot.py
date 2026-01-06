@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 from concurrent.futures import ThreadPoolExecutor
+from functools import reduce
+import operator
+
 import os
 import sys, json, random
 from collections import deque
@@ -9,226 +12,20 @@ from uuid import uuid4
 
 from enum import Enum
 
-
-DEBUG = False
-MAX_DISTANCE = 2
+USE_MULTITHREADING = True
 DECAY_FACTOR = 0.8
 DECAY_CHANGE = 0.9
-NUMBER_OF_LAST_POSITIONS = 0
 OPPONENT_PENALTY_TTL = 0.01
 NOT_SEEN_FIELDS = 7
 NOT_SEEN_THREASHOLD = 100
-EXPLORATION_FIELD_VALUE = 50
+EXPLORATION_FIELD_VALUE = 150
 CYCLING_RELEVANT_FIELDS = 9
 MAX_CYCLING_OCCOURENCES = 3
 STEP_REDUCE = 20
+MAP_STOP_DISTANCE = 40
+MAX_EXLORATION_FIELDS = 10
 
 random.seed(1)
-class gem_searcher:
-    def __init__(__self__):
-        __self__.config = {}
-        __self__.width = 0
-        __self__.height = 0
-        __self__.first_tick = True
-        __self__.current_tick = 0
-        __self__.max_ticks = 0
-        __self__.last_positions = []
-        __self__.folder = str(uuid4())
-        __self__.walls = None
-        __self__.gems = {}
-        __self__.known_walls = set()
-        __self__.visible_fields = []
-        __self__.current_target = None
-        __self__.target_not_reached_counter = 10
-        __self__.last_seen_fields = {}
-        __self__.unseen_fields = set()
-        __self__.void_fields = set()
-        __self__.all_fields = set()
-        __self__.view_positions = dict()
-        if DEBUG:
-            import os
-            os.makedirs(__self__.folder,exist_ok=True)
-    def main(__self__):
-        for line in sys.stdin:
-            __self__.log('----------------')
-            data = json.loads(line)
-
-            __self__.analyse_json(data)
-            map = __self__.build_map()
-            if DEBUG:
-                np.savetxt(f"{__self__.folder}/data_{__self__.current_tick:05}.csv",map,delimiter=";")
-            
-            move = __self__.select_move(map)
-            print(move, flush=True)
-
-    def log(__self__,message):
-        '''Writes to STD ERR if DEBUG is enabled'''
-        if DEBUG:
-            print(message,file=sys.stderr,flush=True)
-    def store(__self__,value,prefix:str='data'):
-        '''Stores the bot state to a file if DEBUG is enabled. Each file is numbered sequentially'''
-        if DEBUG:
-            with open(f"{__self__.folder}/{prefix}_bot_state{__self__.current_tick:05}.json","w") as f:
-                json.dump(value,f)
-
-    def calc_distance(__self__,pos1:tuple[int,int],pos2:tuple[int,int])->int:
-        '''
-            Simple helper function to calulate Manhattan distance
-        '''
-        return abs(pos1[0]-pos2[0]) + abs(pos1[1]-pos2[1])
-
-    def analyse_json(__self__,data):
-        __self__.store(data,'raw')
-        if __self__.first_tick:
-            __self__.log('First Tick')
-            __self__.config = data.get("config", {})
-            __self__.width = __self__.config.get("width")
-            __self__.height = __self__.config.get("height")
-            __self__.max_ticks = __self__.config.get("max_ticks")
-            __self__.first_tick = False
-            __self__.walls = np.ones((__self__.height,__self__.width))
-            for x in range(__self__.width):
-                for y in range(__self__.height):
-                    __self__.all_fields.add((x,y))
-        __self__.current_tick = data.get("tick")
-        __self__.opponents = [x['position'] for x in data.get("visible_bots",[])]
-        my_pos = {'bot':data['bot'],"visible_gems":data.get("visible_gems",None)}
-        __self__.last_positions.append(my_pos['bot'])
-        for wall in data.get('wall'):
-            __self__.walls[wall[1],wall[0]] = 0
-            __self__.known_walls.add((wall[0],wall[1]))
-        __self__.visible_fields = {(x[0],x[1]) for x in data.get('floor')}
-        for field in __self__.last_seen_fields.keys():
-            __self__.last_seen_fields[field] = 0 if field in __self__.visible_fields else __self__.last_seen_fields[field] + 1
-        for field in __self__.visible_fields:
-            __self__.last_seen_fields[field] = 0
-            data_element = __self__.view_positions.get(field,set())
-            data_element.add((data['bot'][0],data['bot'][1]))
-            __self__.view_positions[field] = data_element
-        __self__.unseen_fields = set(__self__.all_fields - set(__self__.last_seen_fields.keys()) - __self__.known_walls - __self__.void_fields)
-        __self__.log(f'Unseen fields: {len(__self__.unseen_fields)}, void fields: {len(__self__.void_fields)}')
-        if len(__self__.last_positions) > NUMBER_OF_LAST_POSITIONS:
-            __self__.last_positions.pop(0)
-        for gem in __self__.gems.values():
-            gem['ttl'] -= 1
-        outdated_gems = [key for key,gem in __self__.gems.items() if gem['ttl'] <= 0]
-        outdated_gems.extend([key for key,gem in __self__.gems.items() if gem['x_gem'] == my_pos['bot'][0] and gem['y_gem'] == my_pos['bot'][1]])
-        for key in outdated_gems:
-            __self__.gems.pop(key)
-        for gem in my_pos["visible_gems"]:
-            __self__.gems[(gem['position'][0],gem['position'][1])] = {
-            'x_gem': gem['position'][0],
-            'y_gem': gem['position'][1],
-            'ttl': gem['ttl'],
-            'distance_to_oppeent': min([__self__.calc_distance(gem['position'],opp) for opp in __self__.opponents]) if __self__.opponents else float('inf'),
-            'distance':__self__.calc_distance(my_pos['bot'], gem['position'])
-            }
-        __self__.my_pos = my_pos
-
-    def build_single_map(__self__,gem):
-        '''
-            Build a distance decay map for a single gem. Most victory_points are near the gem, decaying with manhatten distance
-        '''
-        if not __self__.known_walls:
-            __self__.log('No known walls, using simple distance map')
-            x0 = gem['x_gem']
-            y0 = gem['y_gem']
-            x = np.arange(__self__.width)
-            y = np.arange(__self__.height)[:,None]
-            map = np.abs(x - x0) + np.abs(y - y0)
-        else:
-            map = np.full((__self__.height, __self__.width), 100, dtype=np.int8)
-            q = deque()
-            q.append((gem['x_gem'], gem['y_gem'], 0))
-            while q:
-                x, y, dist = q.popleft()
-                # bounds check
-                if x < 0 or x >= __self__.width or y < 0 or y >= __self__.height:
-                    continue
-                # skip walls
-                if (x, y) in __self__.known_walls:
-                    continue
-                # already has a shorter distance
-                if map[y, x] <= dist:
-                    continue
-                map[y, x] = dist
-                nd = dist + 1
-                q.append((x+1, y, nd))
-                q.append((x-1, y, nd))
-                q.append((x, y+1, nd))
-                q.append((x, y-1, nd))
-            # After map is built, check if the bot could reach the goal, else add to void fields
-            if map[__self__.my_pos['bot'][1],__self__.my_pos['bot'][0]] == 100:
-                __self__.void_fields.add((gem['x_gem'],gem['y_gem']))
-                map = np.full((__self__.height, __self__.width), 100, dtype=np.int8)
-
-        map = gem['ttl'] * DECAY_FACTOR**(map)
-        return map
-
-    def build_map(__self__,)->np.ndarray:
-        '''
-            Build a distance decay map for all gems
-        '''
-        full_map = np.ones((__self__.height,__self__.width))
-        # Remove Gems much closer to the opponent than to us
-        orderd_gems = sorted(__self__.gems.values(),key=lambda x:x['distance_to_oppeent'] - x['distance'])
-        do_remove = len(__self__.opponents) > 0
-        enough_gems = len(orderd_gems) > 1
-        removal_distance = enough_gems and ((orderd_gems[0]['distance_to_oppeent'] - orderd_gems[0]['distance']) > MAX_DISTANCE)
-        if  do_remove and enough_gems and removal_distance:
-            __self__.log(f'Removed gem at {orderd_gems[0]["x_gem"]},{orderd_gems[0]["y_gem"]} as too close to opponent')
-            orderd_gems.pop(0)
-        # Build a map for each gem and add it to the full map
-        __self__.log(f'Building map with {len(orderd_gems)} gems')
-        for gem in orderd_gems:
-            single_map = __self__.build_single_map(gem)
-            full_map += single_map*10
-        for opp in __self__.opponents:
-            single_map = __self__.build_single_map({'x_gem':opp[0],'y_gem':opp[1],'ttl':OPPONENT_PENALTY_TTL})
-            full_map -= single_map
-        # Explore unseen areas if no gems are visible
-        if not __self__.gems:
-            if __self__.unseen_fields:
-                __self__.log('No gems visible, exploring unseen fields')
-                for field in random.sample(sorted(__self__.unseen_fields),min(10,len(__self__.unseen_fields))):
-                    single_map = __self__.build_single_map({'x_gem':field[0],'y_gem':field[1],'ttl':1})
-                    full_map += single_map
-            else:
-                __self__.log('No unseen fields, exploring least recently seen fields')
-                max_time_field_not_seen = max(__self__.last_seen_fields.values())
-                relevant_fields = [field for field,not_seen in __self__.last_seen_fields.items() if not_seen == max_time_field_not_seen]
-                if __self__.current_target not in relevant_fields or __self__.target_not_reached_counter <=0:
-                    __self__.current_target = random.choice(relevant_fields)
-                __self__.target_not_reached_counter = 10
-                view_positions = __self__.view_positions.get(__self__.current_target,None)
-                if not view_positions:
-                    single_map = __self__.build_single_map({'x_gem':__self__.current_target[0],'y_gem':__self__.current_target[1],'ttl':1})
-                    full_map += single_map
-                else:
-                    __self__.log(f'Using view positions {len(view_positions)} to reach target at {__self__.current_target}')
-                    for pos in list(view_positions)[0:min(len(view_positions),10)]:
-                        full_map += __self__.build_single_map({'x_gem':pos[0],'y_gem':pos[1],'ttl':1})
-        #Set all old positions to 0, to avoid going in circles
-        for pos in __self__.last_positions:
-            full_map[pos[1],pos[0]] = 0
-        # Mask walls
-        full_map = full_map * __self__.walls
-        return full_map
-    def select_move(__self__,map:np.ndarray)->str:
-        '''
-            gathers the four values around the bot, and its values. selects the field with the highest value as next move
-        '''
-        bot_x = __self__.my_pos['bot'][0]
-        bot_y = __self__.my_pos['bot'][1]
-        directions = {}
-        #Map is indexed [y,x] Select the possible next steps
-        directions['W']=map[bot_y,max(bot_x-1,0)]
-        directions['E']=map[bot_y,min(bot_x+1,__self__.width-1)]
-        directions['N']=map[max(bot_y-1,0),bot_x]
-        directions['S']=map[min(bot_y+1,__self__.height),bot_x]
-        __self__.log(f'Bot position: {bot_x},{bot_y} {directions}')    
-        return max(directions,key=directions.get)
-
 class log_level(Enum):
     DEBUG = 1
     INFO = 2
@@ -241,27 +38,37 @@ class gem_bot:
         Gem Bot is a second implementation for the game hidden gems.
     '''
     def __init__(__self__):
+        #Game Config
+        __self__.visibility_range = 100
+        __self__.max_gems = 0
+        __self__.use_signal = False
+        __self__.signal_radius = 1
+        #Base Config
         __self__.current_log_level = log_level.GAME
+        __self__.decay_factor = DECAY_FACTOR
+        __self__.map_max_distance = MAP_STOP_DISTANCE
+        # Current State
         __self__.first_tick = True
         __self__.current_tick = 0
         __self__.current_pos = (0,0)
         __self__.current_map = None
+        __self__.field_changed = False
+        __self__.field = None # Distance map from robot     
+        __self__.cycling_detected = False
         # Memory (more than move)
         __self__.walls = None #Map where each wall is set to 0, free space and unknown to 1
         __self__.anchor_views = dict() # For each position, store which other positions could be seen
         __self__.unseen_fields = set()
         __self__.void_fields = set()
         __self__.last_seen_fields = dict()
-        __self__.field_changed = False
-        __self__.field = None # Distance map from robot     
         __self__.opponents = set()
-        __self__.gems = dict()   
+        __self__.gems = dict()
+        __self__.gem_options = set()   
         __self__.floor_tiles = set()
         __self__.current_targets = list()
         __self__.last_position = None
         __self__.path_history = []
-        __self__.cycling_detected = False
-        __self__.decay_factor = DECAY_FACTOR
+
     def main(__self__):
         for line in sys.stdin:
             data = json.loads(line) #
@@ -279,7 +86,8 @@ class gem_bot:
         __self__.__analyse_walls(data.get("wall",[]))
         __self__.__analyse_floor(data.get("floor",[]))
         __self__.__analyse_openents(data.get("visible_bots",[]))
-        __self__.__analyse_gems(data.get('visible_gems',[]))        
+        __self__.__analyse_gems(data.get('visible_gems',[]))  
+        __self__.__analyse_singal(data.get('signal_level',0))      
     def __analyse_first_tick(__self__,data):
         __self__.log('First Tick',log_level.DEBUG)
         __self__.first_tick = False
@@ -287,6 +95,10 @@ class gem_bot:
         __self__.width = data['config']['width']
         __self__.height = data['config']['height']
         __self__.max_ticks = data['config']["max_ticks"]
+        __self__.visibility_range = data['config']["vis_radius"]
+        __self__.max_gems = data['config']["max_gems"]
+        __self__.use_signal = data['config']["emit_signals"]
+        __self__.signal_radius = data['config']["signal_radius"]
         __self__.walls = np.ones((__self__.height,__self__.width))
         for x in range(__self__.width):
             for y in range(__self__.height):
@@ -340,14 +152,16 @@ class gem_bot:
             __self__.cycling_detected = True
         if __self__.cycling_detected:
             __self__.decay_factor = __self__.decay_factor * DECAY_CHANGE
+            __self__.map_max_distance = __self__.map_max_distance + 5
             __self__.field_changed = True
-            __self__.log(f'Cycling detected, reduced decay factor to {__self__.decay_factor}',log_level.INFO)
+            __self__.log(f'Cycling detected, reduced decay factor to {__self__.decay_factor} and map_max_distance to {__self__.map_max_distance}',log_level.INFO)
             for cycle_field in [field for field,value in __self__.last_seen_fields.items() if value == max_time]:
                 __self__.last_seen_fields[cycle_field] -= min(STEP_REDUCE, __self__.last_seen_fields[cycle_field])
                 __self__.log(f'Reduced not seen time for field {cycle_field} to {__self__.last_seen_fields[cycle_field]}',log_level.INFO)
         else:
             __self__.decay_factor = DECAY_FACTOR
-            __self__.log(f'No cycling detected, reset decay factor to {DECAY_FACTOR}',log_level.INFO)
+            __self__.map_max_distance = MAP_STOP_DISTANCE
+            __self__.log(f'No cycling detected, reset decay factor to {DECAY_FACTOR} and map_max_distance to {MAP_STOP_DISTANCE}',log_level.INFO)
     def __analyse_openents(__self__,opponents:list):
         __self__.opponents.clear()
         for opp in opponents:
@@ -361,9 +175,8 @@ class gem_bot:
             __self__.gems.pop(visible_field,None)
         #Decrease each seen gem
         for k,v in __self__.gems.items():
-            if v <= 0:
-                __self__.gems.pop(k) # Remove Gems without ticks left
             __self__.gems[k] = v - 1 #Decrease value by 1 point
+        __self__.gems = {k:v for k,v in __self__.gems.items() if v > 0} #Remove all gems with ttl 0
         #Add new Gems
         for gem in gems:
             gem_pos = tuple(gem['position'])
@@ -371,6 +184,78 @@ class gem_bot:
             __self__.gems[gem_pos] = gem['ttl']
             if gem_pos not in temp_gem_keys:
                 __self__.field_changed = True
+    def __singal_distance_to_signal_level(__self__,distance:float)->float:
+        if not __self__.use_signal:
+            return 0
+        # Distance formula
+        # s = 1 / (1 + (d/r)²)
+        # With d = distance, r = __self__.signal_radius, s = signal_level
+        signal_level = 1 / (1 + (distance/__self__.signal_radius)**2)
+        return signal_level
+    def __signal_singal_level_to_distance(__self__,signal_level:float)->float:
+        if not __self__.use_signal:
+            return float('inf')
+        # Distance formula
+        # s = 1 / (1 + (d/r)²)
+        # With d = distance, r = __self__.signal_radius, s = signal_level
+        # Distance is given without any borders
+        # s = 1 / (1 + (d/r)²)  solve for d
+        # s * (1 + (d/r)²) = 1
+        # 1 + (d/r)² = 1/s
+        # (d/r)² = (1/s) - 1
+        # d/r = sqrt((1/s) - 1)
+        # d = r * sqrt((1/s) - 1)
+        # d = r * sqrt((1 - s)/s)
+        if signal_level > 1:
+            __self__.log(f'Invalid signal level {signal_level}, returning inf distance',log_level.ERROR)
+            return float('inf')
+        if signal_level == 0:
+            __self__.log(f'Signal level is 0, returning inf distance',log_level.INFO)
+            return float('inf')
+        distance = __self__.signal_radius * ((1 - signal_level)/signal_level)**0.5
+        return distance
+    def __analyse_singal(__self__,signal_level:float):
+        if not __self__.use_signal:
+            return
+        #Remove all known singals
+        for gem in __self__.gems.keys():
+            gem_dist = __self__.calc_distance(gem,__self__.current_pos)
+            gem_singal_strength = __self__.__singal_distance_to_signal_level(gem_dist)
+            signal_level -= gem_singal_strength
+            __self__.log(f'Removed known gem at {gem} with distance {gem_singal_strength} from signal level, new signal level {signal_level}',log_level.WARNING)
+        if signal_level > 1:
+            __self__.log(f'Invalid signal level {signal_level}, ignoring',log_level.ERROR)
+            return
+        if signal_level == 0:
+            __self__.log(f'Signal level is 0, no gem in range, abort singal analysis',log_level.INFO)
+            return
+        distance = __self__.__signal_singal_level_to_distance(signal_level)
+        __self__.log(f'Signal level {signal_level} indicates a gem at distance {distance}',log_level.WARNING)
+        #Distance is hypotenuse of an rectified triangle. Distances in x and y from bot are Karthets
+        hyptoenuse = distance**2
+        hyptoenuse = round(hyptoenuse)
+        __self__.log(f'Calculated hypotenuse: {hyptoenuse}',log_level.WARNING)
+        __self__.gem_options.clear()
+        new_options = set()
+        for x in range(1,int(distance)):
+            y_squared = np.sqrt( hyptoenuse - x**2)
+            if y_squared.is_integer():
+                __self__.log(f'Calculating possible gem positions for x distance {x} to {x**2}',log_level.WARNING)
+                __self__.log(f'Calculated y squared: {y_squared}',log_level.WARNING)
+                y = int(y_squared)
+                new_options.add( ( __self__.current_pos[0] + x , __self__.current_pos[1] + y ) )
+                new_options.add( ( __self__.current_pos[0] + x , __self__.current_pos[1] - y ) )
+                new_options.add( ( __self__.current_pos[0] - x , __self__.current_pos[1] + y ) )
+                new_options.add( ( __self__.current_pos[0] - x , __self__.current_pos[1] - y ) )
+      # Check for new Options, what is not reallistic:
+        for opt in new_options:
+            if opt[0] < 0 or opt[0] >= __self__.width or opt[1] < 0 or opt[1] >= __self__.height:
+                __self__.log(f'Ignoring gem option {opt}, out of bounds',log_level.WARNING)
+                continue
+            if __self__.walls[opt[1],opt[0]] == 0:
+                __self__.log(f'Ignoring gem option {opt}, wall in the way',log_level.WARNING)
+                continue
+            __self__.gem_options.add(opt)
     #endregion
     def __get_explorartion_fields(__self__)->list[tuple[int,int]]:
         __self__.log('No gems visible, adding nearest unseen field as target')
@@ -379,7 +264,7 @@ class gem_bot:
             distances.append({'loc':x,'dist':__self__.calc_distance(x,__self__.current_pos)}) 
         distances.sort(key=lambda a: a['dist'])
         relevant_elements = list()
-        for i in range(min(20,len(distances))):
+        for i in range(min(MAX_EXLORATION_FIELDS,len(distances))):
             relevant_elements.append(distances[i]['loc'])
         return relevant_elements
     def __get_patrol_fields(__self__)->list[tuple[int,int]]:
@@ -439,23 +324,24 @@ class gem_bot:
             # relevant_values.append(1)
         __self__.log(f'Relevant elements: {relevant_elements}',log_level.INFO)
         __self__.current_targets = relevant_elements
-#        if __self__.field_changed or __self__.field is None:
-            # with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-            #     results = list(executor.map(__self__.build_field,relevant_elements,relevant_values))
-            # __self__.field = np.sum(results)
         field = None
-        for pos,ttl in zip (relevant_elements,relevant_values):
-            single_field = __self__.build_field(pos,ttl)
-            if field is None:
-                field = single_field
-            else:
-                field += single_field
+        if USE_MULTITHREADING:
+            with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+                results = list(executor.map(__self__.build_field,relevant_elements,relevant_values))
+            field = reduce(operator.add,results)
+        else:
+            for pos,ttl in zip (relevant_elements,relevant_values):
+                single_field = __self__.build_field(pos,ttl)
+                if field is None:
+                    field = single_field
+                else:
+                    field += single_field
         if field.any():
             __self__.field = field
         else:
             raise Exception('No field could be built')
         # select way to gem
-    def build_field(__self__,target:tuple[int,int],target_value:int=1,decay:float|None='use_self'):
+    def build_field(__self__,target:tuple[int,int],target_value:int=1,decay:float|None='use_self',stop_at_distance:int=None)->np.ndarray:
         '''
         This computes the whole field, abort as soon as the position of the bot is reached.
         Formula is target_value * decay**field_value
@@ -470,11 +356,14 @@ class gem_bot:
         '''
         if decay == 'use_self':
             decay = __self__.decay_factor
+        if not stop_at_distance:
+            stop_at_distance = __self__.map_max_distance
         # Creates the potential field, with all known obstacles, unknown fields are handled as available fields for this
         __self__.log(f'Building field for target at {target} with value {target_value} and decay {decay}',log_level.DEBUG)
         map = np.full((__self__.height, __self__.width), 100, dtype=np.int8)
         q = deque()
         q.append((target[0],target[1], 0))
+        early_stopped = False
         while q:
             x, y, dist = q.popleft()
             # bounds check
@@ -488,11 +377,14 @@ class gem_bot:
                 continue
             map[y, x] = dist
             nd = dist + 1
+            if nd > stop_at_distance:
+                early_stopped = True
+                continue
             q.append((x+1, y, nd))
             q.append((x-1, y, nd))
             q.append((x, y+1, nd))
             q.append((x, y-1, nd))
-        if map[__self__.current_pos[1],__self__.current_pos[0]] == 100:
+        if not early_stopped and map[__self__.current_pos[1],__self__.current_pos[0]] == 100:
             __self__.void_fields.add(target)
             __self__.log(f'Target at {target} is unreachable, added to void fields',log_level.WARNING)
         if decay:
@@ -514,6 +406,8 @@ class gem_bot:
             else:
                 color = '#00FF00'
             hightlight.append([target[0],target[1],color])
+        for gem_pos in __self__.gem_options:
+            hightlight.append([gem_pos[0],gem_pos[1],"#FF0000"])
         return ' '+json.dumps(maps)
     def select_move(__self__)->str:
         '''
