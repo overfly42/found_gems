@@ -19,12 +19,13 @@ OPPONENT_PENALTY_TTL = 0.01
 NOT_SEEN_FIELDS = 7
 NOT_SEEN_THREASHOLD = 100
 EXPLORATION_FIELD_VALUE = 100
-POSSIBLE_GEM_VALUE = 200
-CYCLING_RELEVANT_FIELDS = 9
+POSSIBLE_GEM_VALUE = 10
+CYCLING_RELEVANT_FIELDS = 20
 MAX_CYCLING_OCCOURENCES = 3
 STEP_REDUCE = 20
-MAP_STOP_DISTANCE = 40
-MAX_EXLORATION_FIELDS = 10
+MAP_STOP_DISTANCE = 4000
+MAX_EXLORATION_FIELDS = 20
+EPS = 1e-6
 
 random.seed(1)
 class log_level(Enum):
@@ -47,7 +48,7 @@ class gem_bot:
         __self__.signal_radius = 1
         __self__.gem_duration = 1000
         #Base Config
-        __self__.current_log_level = log_level.GAME
+        __self__.current_log_level = log_level.DEBUG
         __self__.decay_factor = DECAY_FACTOR
         __self__.map_max_distance = MAP_STOP_DISTANCE
         # Current State
@@ -76,7 +77,8 @@ class gem_bot:
         for line in sys.stdin:
             data = json.loads(line) #
             __self__.analyse(data)
-            __self__.plan()
+            # __self__.plan()
+            __self__.plan_v2()
             __self__.select_move()
     #region analyse data
     def analyse(__self__,data):
@@ -90,7 +92,7 @@ class gem_bot:
         __self__.__analyse_floor(data.get("floor",[]))
         __self__.__analyse_openents(data.get("visible_bots",[]))
         __self__.__analyse_gems(data.get('visible_gems',[]))  
-        __self__.__analyse_singal(data.get('signal_level',0))      
+        # __self__.__analyse_singal(data.get('signal_level',0))      
     def __analyse_first_tick(__self__,data):
         __self__.log('First Tick',log_level.DEBUG)
         __self__.first_tick = False
@@ -136,6 +138,11 @@ class gem_bot:
                 tile = tuple(tile)
                 anchor.add(tile)
                 __self__.unseen_fields.discard(tile)
+                if tile in __self__.void_fields:
+                    __self__.void_fields.discard(tile)
+                    __self__.last_seen_fields[tile] = __self__.current_tick
+                    __self__.walls[tile[1],tile[0]] = 1
+                    __self__.unseen_fields.add(tile)
             __self__.anchor_views[__self__.current_pos] = anchor
         __self__.floor_tiles.update(anchor)
         #Remove all void fields from unseen fields
@@ -195,6 +202,7 @@ class gem_bot:
         # s = 1 / (1 + (d/r)²)
         # With d = distance, r = __self__.signal_radius, s = signal_level
         signal_level = 1 / (1 + (distance/__self__.signal_radius)**2)
+        signal_level = np.round(signal_level,6)
         return signal_level
     def __signal_singal_level_to_distance(__self__,signal_level:float)->float:
         if not __self__.use_signal:
@@ -230,13 +238,19 @@ class gem_bot:
         if signal_level > 1:
             __self__.log(f'Invalid signal level {signal_level}, ignoring',log_level.ERROR)
             return
-        if signal_level == 0:
+        if signal_level <= 0:
             __self__.log(f'Signal level is 0, no gem in range, abort singal analysis',log_level.INFO)
             return
         distance = __self__.__signal_singal_level_to_distance(signal_level)
         __self__.log(f'Signal level {signal_level} indicates a gem at distance {distance}',log_level.INFO)
         #Distance is hypotenuse of an rectified triangle. Distances in x and y from bot are Karthets
+        if distance > __self__.height + __self__.width:
+            __self__.log(f'Calculated distance {distance} is larger than map size, ignoring',log_level.WARNING)
+            return
         hyptoenuse = distance**2
+        if isinstance(hyptoenuse,complex):
+            __self__.log(f'type of hyptoenuse before rounding: {type(hyptoenuse)}',log_level.DEVELOP)
+            return
         hyptoenuse = round(hyptoenuse)
         __self__.log(f'Calculated hypotenuse: {hyptoenuse}',log_level.DEBUG)
         new_options = set()
@@ -250,6 +264,8 @@ class gem_bot:
                 new_options.add( ( __self__.current_pos[0] + x , __self__.current_pos[1] - y ) )
                 new_options.add( ( __self__.current_pos[0] - x , __self__.current_pos[1] + y ) )
                 new_options.add( ( __self__.current_pos[0] - x , __self__.current_pos[1] - y ) )
+            else:
+                __self__.log(f'Y squared {y_squared} is not integer for x distance {x}, skipping',log_level.INFO)
       # Check for new Options, what is not reallistic:
         for opt in new_options:
             singal_values = __self__.gem_options.get(opt,{}).get('singal_values',[])
@@ -260,13 +276,19 @@ class gem_bot:
                 'signal_values': singal_values,
                 'tick_values': tick_values
             }
+        __self__.log(f'Predicted new gems at positions: {new_options}',log_level.INFO)
         #Clean up
         cleanup_keys = set()
-        cleanup_keys.update(__self__.anchor_views.get(__self__.current_pos,set()))
+        __self__.log(f'Cleaning up gem options, currently {len(cleanup_keys)} options stored',log_level.DEVELOP)
+        # cleanup_keys.update(__self__.anchor_views.get(__self__.current_pos,set()))
         timeout_tick = __self__.current_tick - __self__.gem_duration
         for k,v in __self__.gem_options.items():
             #Remove old options
             tick_values = v.get('tick_values',[])
+            if k in __self__.void_fields:
+                cleanup_keys.add(k)
+                __self__.log(f'Removing gem option {k}, marked as void field',log_level.DEBUG)
+                continue
             if any([tick < timeout_tick for tick in tick_values]):
                 cleanup_keys.add(k)
                 __self__.log(f'Removing gem option {k}, too old',log_level.DEBUG)
@@ -285,6 +307,7 @@ class gem_bot:
                 continue
         for k in cleanup_keys:
             __self__.gem_options.pop(k,None)
+            __self__.log(f'Removed gem option at {k}',log_level.INFO)
     #endregion
     def __get_explorartion_fields(__self__)->list[tuple[int,int]]:
         __self__.log('No gems visible, adding nearest unseen field as target')
@@ -324,10 +347,11 @@ class gem_bot:
                 sorted_anchors = sorted(all_anchors,key=lambda x:target_distances[x[1],x[0]])
                 relevant_elements.append(sorted_anchors[0])
         return relevant_elements
-    def plan(__self__):
-        if not __self__.field_changed:
-            __self__.log('Field has not changed, reusing old field',log_level.INFO)
-            return
+    def __collect_targets(__self__) -> tuple[list[tuple[int,int]],list[int]]:
+        '''
+            Collect all relevant targets for the field calculation
+            Relevant targets are returned as two lists, one with positions, one with values
+        '''
         relevant_elements = list()
         relevant_values = list()
         # Add Gems and Opoennts as targets
@@ -341,7 +365,7 @@ class gem_bot:
             relevant_elements.append(opt)
             relevant_values.append(POSSIBLE_GEM_VALUE)
         # Add next unseen field, if no gem exists
-        __self__.log(f'Gems: {len(__self__.gems)}, Unseen fields: {len(__self__.unseen_fields)}',log_level.INFO)
+        __self__.log(f'Gems: {len(__self__.gems)}, Unseen fields: {len(__self__.unseen_fields)}, Predicted Gems: {len(__self__.gem_options)}',log_level.DEVELOP)
         # In case a cycle is detected, it might not be possible to explore right now.
         if len(__self__.gems) == 0 and len(__self__.unseen_fields)>0 and not __self__.cycling_detected:
             unseen_elements = __self__.__get_explorartion_fields()
@@ -349,13 +373,20 @@ class gem_bot:
                 relevant_elements.append(x)
                 relevant_values.append(EXPLORATION_FIELD_VALUE)
         # elif len(__self__.gems) == 0 and len(__self__.unseen_fields) == 0:
+#        if len(__self__.gems) == 0 and len(__self__.gem_options) == 0:
         patrol_elements = __self__.__get_patrol_fields()
         for x in patrol_elements:
             relevant_elements.append(x)
             relevant_values.append(max(1,__self__.last_seen_fields.get(x,1)))
-            # relevant_values.append(1)
+        # relevant_values.append(1)
         __self__.log(f'Relevant elements: {relevant_elements}',log_level.INFO)
         __self__.current_targets = relevant_elements
+        return relevant_elements,relevant_values
+    def plan(__self__):
+        if not __self__.field_changed:
+            __self__.log('Field has not changed, reusing old field',log_level.INFO)
+            return
+        relevant_elements,relevant_values = __self__.__collect_targets()
         field = None
         if USE_MULTITHREADING:
             with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
@@ -373,6 +404,39 @@ class gem_bot:
         else:
             raise Exception('No field could be built')
         # select way to gem
+    def plan_v2(__self__):
+        '''
+            This planing creates fields for all four possible directions. Afterwards, distance symetry is used to find the values of this fields. 
+            Symetry is distance(a,b) == distance(b,a)
+        '''
+        relevant_elements,relevant_values = __self__.__collect_targets()
+        field = np.zeros((__self__.height,__self__.width),dtype=np.float32)
+        bot_x = __self__.current_pos[0]
+        bot_y = __self__.current_pos[1]
+        future_positions = {
+            'w' : (bot_x-1,bot_y),
+            'n' : (bot_x,bot_y-1),
+            'e' : (bot_x+1,bot_y),
+            's' : (bot_x,bot_y+1)
+        }
+        for direction,pos in future_positions.items():
+            if pos[0] < 0 or pos[0] >= __self__.width or pos[1] < 0 or pos[1] >= __self__.height:
+                continue
+            dir_field = __self__.build_field(pos,target_value=1,decay=None,stop_at_distance=1000)
+            field_value = 0
+            for  target_pos,target_value in zip(relevant_elements,relevant_values):
+                field_exp_value = dir_field[target_pos[1],target_pos[0]]
+                if field_exp_value == 100:
+                    __self__.void_fields.add(target_pos)
+                    __self__.gem_options.pop(target_pos,None)
+                    continue
+                current_field_value = target_value *  __self__.decay_factor ** field_exp_value 
+                field_value +=  current_field_value
+            field[pos[1],pos[0]] = field_value
+            __self__.log(f'Field value for direction {direction} at position {pos} is {field_value}',log_level.DEBUG)
+        __self__.field = field
+
+
     def build_field(__self__,target:tuple[int,int],target_value:int=1,decay:float|None='use_self',stop_at_distance:int=None)->np.ndarray:
         '''
         This computes the whole field, abort as soon as the position of the bot is reached.
@@ -419,6 +483,8 @@ class gem_bot:
         if not early_stopped and map[__self__.current_pos[1],__self__.current_pos[0]] == 100:
             __self__.void_fields.add(target)
             __self__.log(f'Target at {target} is unreachable, added to void fields',log_level.WARNING)
+        if early_stopped:
+            __self__.log(f'Field calculation for target at {target} stopped early at distance {stop_at_distance}',log_level.INFO)
         if decay:
             map = target_value * decay ** map
         else:
@@ -445,6 +511,7 @@ class gem_bot:
         '''
             gathers the four values around the bot, and its values. selects the field with the highest value as next move
         '''
+        __self__.log(f'Number of target:{len(__self__.current_targets)}',log_level.DEVELOP)
         map = __self__.field
         bot_x = __self__.current_pos[0]
         bot_y = __self__.current_pos[1]
@@ -467,11 +534,12 @@ class gem_bot:
         if __self__.walls [n[0],n[1]] > 0 and (n[1],n[0]) not in __self__.opponents:
             directions['N']=map[n[0],n[1]]
         #endregion
+        #region south
         s = (min(bot_y+1,__self__.height),bot_x)
         if __self__.walls [s[0],s[1]] > 0 and (s[1],s[0]) not in __self__.opponents:
             directions['S']=map[s[0],s[1]]
         #endregion
-        __self__.log(f'Bot position: {bot_x},{bot_y} {directions}')  
+        __self__.log(f'Bot position: {bot_x},{bot_y} {directions}',log_level.INFO)  
         if not directions:# Fallback if bot is surrounded
             direction = 'WAIT'
         else:
