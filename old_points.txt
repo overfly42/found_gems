@@ -113,6 +113,8 @@ Stage 2
     ruby runner.rb --seed 14mmo1daof   ..\found_gems\   CRASH   -> 2010 -> 2614 -> 3592 -> 4967
     ruby runner.rb --seed qen3qfzsi   ..\found_gems\   CRASH    -> 3533
 2025-01-07
-    ruby runner.rb --seed 94e1zu4f7   ..\found_gems\   TIMEOUT  --> 2680    --> 4029    --> 3177    --> 4797
-    ruby runner.rb --seed 2o3v8a6oce ..\found_gems\     CRASH   --> 3821
-    ruby runner.rb --seed 21mgm61s41 ..\found_gems\     5043    --> 6679
+    ruby runner.rb --seed 94e1zu4f7   ..\found_gems\   TIMEOUT  --> 2680    --> 4029    --> 3177    --> 4797    --> 3699    --> 4361
+    ruby runner.rb --seed 2o3v8a6oce ..\found_gems\     CRASH   --> 3821    --> 4597    --> 5631    //Use for Singal check
+    ruby runner.rb --seed 21mgm61s41 ..\found_gems\     5043    --> 6679    --> 7534    --> 7939    --> 7534
+2025-01-08
+    ruby runner.rb --seed uhhowezw ..\found_gems\   3090    --> 6948    --> 5720    --> 6539

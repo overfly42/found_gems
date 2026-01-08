@@ -18,14 +18,22 @@ DECAY_CHANGE = 0.9
 OPPONENT_PENALTY_TTL = 0.01
 NOT_SEEN_FIELDS = 7
 NOT_SEEN_THREASHOLD = 100
-EXPLORATION_FIELD_VALUE = 100
+EXPLORATION_FIELD_VALUE = 50
 POSSIBLE_GEM_VALUE = 10
 CYCLING_RELEVANT_FIELDS = 20
 MAX_CYCLING_OCCOURENCES = 3
 STEP_REDUCE = 20
 MAP_STOP_DISTANCE = 4000
-MAX_EXLORATION_FIELDS = 20
+MAX_EXLORATION_FIELDS = 10
 EPS = 1e-6
+NOT_REACHABLE_FIELD = 1000
+# FIELD Changed Parameter
+FIELD_CHANGED_FIELD = 'fcf'
+FIELD_CHANGED_GEMS = 'fcg'
+FIELD_CHANGED_OPPONENTS = 'fco'
+FIELD_CHANGED_WALLS = 'fcw'
+FIELD_CHANGED_VOID = 'fcv'
+FIELD_CHANGED_TARGETS = 'fct'
 
 random.seed(1)
 class log_level(Enum):
@@ -48,7 +56,7 @@ class gem_bot:
         __self__.signal_radius = 1
         __self__.gem_duration = 1000
         #Base Config
-        __self__.current_log_level = log_level.DEBUG
+        __self__.current_log_level = log_level.DEVELOP
         __self__.decay_factor = DECAY_FACTOR
         __self__.map_max_distance = MAP_STOP_DISTANCE
         # Current State
@@ -56,7 +64,7 @@ class gem_bot:
         __self__.current_tick = 0
         __self__.current_pos = (0,0)
         __self__.current_map = None
-        __self__.field_changed = False
+        __self__.field_changed = {}
         __self__.field = None # Distance map from robot     
         __self__.cycling_detected = False
         # Memory (more than move)
@@ -72,13 +80,14 @@ class gem_bot:
         __self__.current_targets = list()
         __self__.last_position = None
         __self__.path_history = []
+        __self__.map_distance_cache = dict()
 
     def main(__self__):
         for line in sys.stdin:
             data = json.loads(line) #
             __self__.analyse(data)
-            # __self__.plan()
-            __self__.plan_v2()
+            __self__.plan()
+            # __self__.plan_v2()
             __self__.select_move()
     #region analyse data
     def analyse(__self__,data):
@@ -86,7 +95,7 @@ class gem_bot:
             __self__.__analyse_first_tick(data)
         __self__.current_tick = data.get("tick")
         __self__.current_pos = (data['bot'][0],data['bot'][1])
-        __self__.field_changed = False
+        __self__.field_changed = {k:False for k in __self__.field_changed}
         __self__.__analyse_bot()
         __self__.__analyse_walls(data.get("wall",[]))
         __self__.__analyse_floor(data.get("floor",[]))
@@ -96,7 +105,7 @@ class gem_bot:
     def __analyse_first_tick(__self__,data):
         __self__.log('First Tick',log_level.DEBUG)
         __self__.first_tick = False
-        __self__.field_changed = True
+        __self__.field_changed[FIELD_CHANGED_FIELD] = True
         __self__.width = data['config']['width']
         __self__.height = data['config']['height']
         __self__.max_ticks = data['config']["max_ticks"]
@@ -113,19 +122,19 @@ class gem_bot:
         # Checks the bot position if it affects any changes in plan
         if __self__.current_pos in __self__.gems:
             __self__.log(f'Collected gem at {__self__.current_pos}',log_level.INFO)
-            __self__.field_changed = True
+            __self__.field_changed[FIELD_CHANGED_GEMS] = True
         if __self__.current_pos in __self__.current_targets:
              __self__.log(f'Reached target at {__self__.current_pos}',log_level.INFO)
-             __self__.field_changed = True
+             __self__.field_changed[FIELD_CHANGED_TARGETS] = True
         if __self__.last_position == __self__.current_pos:
             __self__.log(f'Bot did not move from {__self__.current_pos}',log_level.WARNING)
-            __self__.field_changed = True
+            __self__.field_changed[FIELD_CHANGED_TARGETS] = True
         __self__.last_position = __self__.current_pos
         __self__.path_history.append(__self__.current_pos)
     def __analyse_walls(__self__,walls:list):
         for wall in walls:
             if __self__.walls[wall[1],wall[0]] != 0:
-                __self__.field_changed = True
+                __self__.field_changed[FIELD_CHANGED_WALLS] = True
             __self__.walls[wall[1],wall[0]] = 0 # Set the mask to 0 for walls
             if (wall[0],wall[1]) in __self__.unseen_fields:
                 __self__.unseen_fields.remove((wall[0],wall[1]))
@@ -133,16 +142,16 @@ class gem_bot:
         #Add Field with a list of all visible fields to the anchor list
         anchor = __self__.anchor_views.get(__self__.current_pos,set())
         if __self__.current_pos not in __self__.anchor_views:
-            __self__.field_changed = True
+            __self__.field_changed[FIELD_CHANGED_FIELD] = True
             for tile in floor_tiles:
                 tile = tuple(tile)
                 anchor.add(tile)
                 __self__.unseen_fields.discard(tile)
-                if tile in __self__.void_fields:
-                    __self__.void_fields.discard(tile)
-                    __self__.last_seen_fields[tile] = __self__.current_tick
-                    __self__.walls[tile[1],tile[0]] = 1
-                    __self__.unseen_fields.add(tile)
+                # if tile in __self__.void_fields:
+                #     __self__.void_fields.discard(tile)
+                #     __self__.last_seen_fields[tile] = __self__.current_tick
+                #     __self__.walls[tile[1],tile[0]] = 1
+                #     __self__.unseen_fields.add(tile)
             __self__.anchor_views[__self__.current_pos] = anchor
         __self__.floor_tiles.update(anchor)
         #Remove all void fields from unseen fields
@@ -164,8 +173,8 @@ class gem_bot:
         if __self__.cycling_detected:
             __self__.decay_factor = __self__.decay_factor * DECAY_CHANGE
             __self__.map_max_distance = __self__.map_max_distance + 5
-            __self__.field_changed = True
-            __self__.log(f'Cycling detected, reduced decay factor to {__self__.decay_factor} and map_max_distance to {__self__.map_max_distance}',log_level.INFO)
+            __self__.field_changed[FIELD_CHANGED_TARGETS] = True
+            __self__.log(f'Cycling detected, reduced decay factor to {__self__.decay_factor} and map_max_distance to {__self__.map_max_distance}',log_level.DEVELOP)
             for cycle_field in [field for field,value in __self__.last_seen_fields.items() if value == max_time]:
                 __self__.last_seen_fields[cycle_field] -= min(STEP_REDUCE, __self__.last_seen_fields[cycle_field])
                 __self__.log(f'Reduced not seen time for field {cycle_field} to {__self__.last_seen_fields[cycle_field]}',log_level.INFO)
@@ -176,7 +185,7 @@ class gem_bot:
     def __analyse_openents(__self__,opponents:list):
         __self__.opponents.clear()
         for opp in opponents:
-            __self__.field_changed = True
+            __self__.field_changed[FIELD_CHANGED_OPPONENTS] = True
             __self__.opponents.add((opp['position'][0],opp['position'][1]))
             __self__.log(f'Found opponent at {opp["position"]}',log_level.INFO)
     def __analyse_gems(__self__,gems:list):
@@ -194,7 +203,7 @@ class gem_bot:
             __self__.log(f'Found gem at {gem_pos} with ttl {gem["ttl"]}',log_level.INFO)
             __self__.gems[gem_pos] = gem['ttl']
             if gem_pos not in temp_gem_keys:
-                __self__.field_changed = True
+                __self__.field_changed[FIELD_CHANGED_GEMS] = True
     def __singal_distance_to_signal_level(__self__,distance:float)->float:
         if not __self__.use_signal:
             return 0
@@ -382,9 +391,36 @@ class gem_bot:
         __self__.log(f'Relevant elements: {relevant_elements}',log_level.INFO)
         __self__.current_targets = relevant_elements
         return relevant_elements,relevant_values
+    def __surrounding_fields(__self__,pos:tuple[int,int])->dict[str:tuple[int,int]]:
+        '''
+            Returns the surrounding fields of a given position
+        '''
+        surroundings = dict()
+        surroundings['w'] = (pos[0]-1,pos[1])
+        surroundings['e'] = (pos[0]+1,pos[1])
+        surroundings['n'] = (pos[0],pos[1]-1)
+        surroundings['s'] = (pos[0],pos[1]+1)
+        return surroundings
+    def __check_for_surrounding_walls(__self__,pos:tuple[int,int])->bool:
+        '''
+            This checks if the given position is sourunded by walls. if all elements are eigther out of bound or walls, True is returned
+        
+        :param __self__: Description
+        :param pos: postion to check
+        :type pos: tuple[int, int]
+        :return: true if pos is sourounded by walls
+        :rtype: bool
+        '''
+        surroundings = __self__.__surrounding_fields(pos)
+        for direction,field in surroundings.items():
+            if field[0] < 0 or field[0] >= __self__.width or field[1] < 0 or field[1] >= __self__.height:
+                continue
+            if __self__.walls[field[1],field[0]] > 0:
+                return False
+        return True
     def plan(__self__):
-        if not __self__.field_changed:
-            __self__.log('Field has not changed, reusing old field',log_level.INFO)
+        if not any(__self__.field_changed.values()):
+            __self__.log('Field has not changed, reusing old field',log_level.DEVELOP)
             return
         relevant_elements,relevant_values = __self__.__collect_targets()
         field = None
@@ -411,25 +447,22 @@ class gem_bot:
         '''
         relevant_elements,relevant_values = __self__.__collect_targets()
         field = np.zeros((__self__.height,__self__.width),dtype=np.float32)
-        bot_x = __self__.current_pos[0]
-        bot_y = __self__.current_pos[1]
-        future_positions = {
-            'w' : (bot_x-1,bot_y),
-            'n' : (bot_x,bot_y-1),
-            'e' : (bot_x+1,bot_y),
-            's' : (bot_x,bot_y+1)
-        }
+        future_positions = __self__.__surrounding_fields(__self__.current_pos)
         for direction,pos in future_positions.items():
             if pos[0] < 0 or pos[0] >= __self__.width or pos[1] < 0 or pos[1] >= __self__.height:
                 continue
-            dir_field = __self__.build_field(pos,target_value=1,decay=None,stop_at_distance=1000)
+            dir_field = __self__.build_field(pos,target_value=1,decay=None)
             field_value = 0
             for  target_pos,target_value in zip(relevant_elements,relevant_values):
                 field_exp_value = dir_field[target_pos[1],target_pos[0]]
-                if field_exp_value == 100:
-                    __self__.void_fields.add(target_pos)
-                    __self__.gem_options.pop(target_pos,None)
-                    continue
+                # if __self__.__check_for_surrounding_walls(target_pos):
+                #     __self__.walls[target_pos[1],target_pos[0]] = 0
+                #     continue
+                # if field_exp_value == NOT_REACHABLE_FIELD:
+                #     __self__.log(f'Target at {target_pos} is unreachable from position {pos}, adding to void fields',log_level.DEBUG)
+                #     __self__.void_fields.add(target_pos)
+                #     __self__.gem_options.pop(target_pos,None)
+                #     continue
                 current_field_value = target_value *  __self__.decay_factor ** field_exp_value 
                 field_value +=  current_field_value
             field[pos[1],pos[0]] = field_value
@@ -450,13 +483,20 @@ class gem_bot:
         :param decay: factor for decreasing each value on the field. if None, decay is not calculated
         :type decay: float|None
         '''
+        #Check if this is already in cache and cache could be used
+        field_changed = __self__.field_changed.get(FIELD_CHANGED_FIELD, False)
+        field_changed = field_changed or __self__.field_changed.get(FIELD_CHANGED_WALLS, False)
+        field_changed = field_changed or __self__.field_changed.get(FIELD_CHANGED_VOID, False)
+        if target in __self__.map_distance_cache and not field_changed:
+            __self__.log(f'Using cached distance map for target at {target}',log_level.DEVELOP)
+            return __self__.map_distance_cache[target]
         if decay == 'use_self':
             decay = __self__.decay_factor
         if not stop_at_distance:
             stop_at_distance = __self__.map_max_distance
         # Creates the potential field, with all known obstacles, unknown fields are handled as available fields for this
         __self__.log(f'Building field for target at {target} with value {target_value} and decay {decay}',log_level.DEBUG)
-        map = np.full((__self__.height, __self__.width), 100, dtype=np.int8)
+        map = np.full((__self__.height, __self__.width), NOT_REACHABLE_FIELD, dtype=np.int16)
         q = deque()
         q.append((target[0],target[1], 0))
         early_stopped = False
@@ -480,7 +520,7 @@ class gem_bot:
             q.append((x-1, y, nd))
             q.append((x, y+1, nd))
             q.append((x, y-1, nd))
-        if not early_stopped and map[__self__.current_pos[1],__self__.current_pos[0]] == 100:
+        if not early_stopped and map[__self__.current_pos[1],__self__.current_pos[0]] == NOT_REACHABLE_FIELD:
             __self__.void_fields.add(target)
             __self__.log(f'Target at {target} is unreachable, added to void fields',log_level.WARNING)
         if early_stopped:
@@ -489,6 +529,7 @@ class gem_bot:
             map = target_value * decay ** map
         else:
             map = target_value * map
+        __self__.map_distance_cache[target] = map
         return map
     def hightlight_targets(__self__)->str:
         if __self__.current_log_level == log_level.GAME:
