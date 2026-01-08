@@ -56,7 +56,7 @@ class gem_bot:
         __self__.signal_radius = 1
         __self__.gem_duration = 1000
         #Base Config
-        __self__.current_log_level = log_level.DEVELOP
+        __self__.current_log_level = log_level.GAME
         __self__.decay_factor = DECAY_FACTOR
         __self__.map_max_distance = MAP_STOP_DISTANCE
         # Current State
@@ -147,11 +147,7 @@ class gem_bot:
                 tile = tuple(tile)
                 anchor.add(tile)
                 __self__.unseen_fields.discard(tile)
-                # if tile in __self__.void_fields:
-                #     __self__.void_fields.discard(tile)
-                #     __self__.last_seen_fields[tile] = __self__.current_tick
-                #     __self__.walls[tile[1],tile[0]] = 1
-                #     __self__.unseen_fields.add(tile)
+
             __self__.anchor_views[__self__.current_pos] = anchor
         __self__.floor_tiles.update(anchor)
         #Remove all void fields from unseen fields
@@ -162,7 +158,6 @@ class gem_bot:
         __self__.last_seen_fields = {pos:0 if pos in anchor else __self__.last_seen_fields.get(pos,0)+1 for pos in __self__.floor_tiles}
         #Decrease time, in case robot is running cycles, only relevant if an oponent is there
         __self__.cycling_detected = False
-#        if __self__.opponents:
         max_time = max (__self__.last_seen_fields.values())
         last_field_list = __self__.path_history[-min(__self__.current_tick,CYCLING_RELEVANT_FIELDS):]
         last_field_set = set(last_field_list)
@@ -174,7 +169,7 @@ class gem_bot:
             __self__.decay_factor = __self__.decay_factor * DECAY_CHANGE
             __self__.map_max_distance = __self__.map_max_distance + 5
             __self__.field_changed[FIELD_CHANGED_TARGETS] = True
-            __self__.log(f'Cycling detected, reduced decay factor to {__self__.decay_factor} and map_max_distance to {__self__.map_max_distance}',log_level.DEVELOP)
+            __self__.log(f'Cycling detected, reduced decay factor to {__self__.decay_factor} and map_max_distance to {__self__.map_max_distance}',log_level.WARNING)
             for cycle_field in [field for field,value in __self__.last_seen_fields.items() if value == max_time]:
                 __self__.last_seen_fields[cycle_field] -= min(STEP_REDUCE, __self__.last_seen_fields[cycle_field])
                 __self__.log(f'Reduced not seen time for field {cycle_field} to {__self__.last_seen_fields[cycle_field]}',log_level.INFO)
@@ -381,8 +376,6 @@ class gem_bot:
             for x in unseen_elements:
                 relevant_elements.append(x)
                 relevant_values.append(EXPLORATION_FIELD_VALUE)
-        # elif len(__self__.gems) == 0 and len(__self__.unseen_fields) == 0:
-#        if len(__self__.gems) == 0 and len(__self__.gem_options) == 0:
         patrol_elements = __self__.__get_patrol_fields()
         for x in patrol_elements:
             relevant_elements.append(x)
@@ -420,7 +413,7 @@ class gem_bot:
         return True
     def plan(__self__):
         if not any(__self__.field_changed.values()):
-            __self__.log('Field has not changed, reusing old field',log_level.DEVELOP)
+            __self__.log('Field has not changed, reusing old field',log_level.INFO)
             return
         relevant_elements,relevant_values = __self__.__collect_targets()
         field = None
@@ -440,34 +433,6 @@ class gem_bot:
         else:
             raise Exception('No field could be built')
         # select way to gem
-    def plan_v2(__self__):
-        '''
-            This planing creates fields for all four possible directions. Afterwards, distance symetry is used to find the values of this fields. 
-            Symetry is distance(a,b) == distance(b,a)
-        '''
-        relevant_elements,relevant_values = __self__.__collect_targets()
-        field = np.zeros((__self__.height,__self__.width),dtype=np.float32)
-        future_positions = __self__.__surrounding_fields(__self__.current_pos)
-        for direction,pos in future_positions.items():
-            if pos[0] < 0 or pos[0] >= __self__.width or pos[1] < 0 or pos[1] >= __self__.height:
-                continue
-            dir_field = __self__.build_field(pos,target_value=1,decay=None)
-            field_value = 0
-            for  target_pos,target_value in zip(relevant_elements,relevant_values):
-                field_exp_value = dir_field[target_pos[1],target_pos[0]]
-                # if __self__.__check_for_surrounding_walls(target_pos):
-                #     __self__.walls[target_pos[1],target_pos[0]] = 0
-                #     continue
-                # if field_exp_value == NOT_REACHABLE_FIELD:
-                #     __self__.log(f'Target at {target_pos} is unreachable from position {pos}, adding to void fields',log_level.DEBUG)
-                #     __self__.void_fields.add(target_pos)
-                #     __self__.gem_options.pop(target_pos,None)
-                #     continue
-                current_field_value = target_value *  __self__.decay_factor ** field_exp_value 
-                field_value +=  current_field_value
-            field[pos[1],pos[0]] = field_value
-            __self__.log(f'Field value for direction {direction} at position {pos} is {field_value}',log_level.DEBUG)
-        __self__.field = field
 
 
     def build_field(__self__,target:tuple[int,int],target_value:int=1,decay:float|None='use_self',stop_at_distance:int=None)->np.ndarray:
@@ -488,7 +453,7 @@ class gem_bot:
         field_changed = field_changed or __self__.field_changed.get(FIELD_CHANGED_WALLS, False)
         field_changed = field_changed or __self__.field_changed.get(FIELD_CHANGED_VOID, False)
         if target in __self__.map_distance_cache and not field_changed:
-            __self__.log(f'Using cached distance map for target at {target}',log_level.DEVELOP)
+            __self__.log(f'Using cached distance map for target at {target}',log_level.DEBUG)
             return __self__.map_distance_cache[target]
         if decay == 'use_self':
             decay = __self__.decay_factor
@@ -552,14 +517,12 @@ class gem_bot:
         '''
             gathers the four values around the bot, and its values. selects the field with the highest value as next move
         '''
-        __self__.log(f'Number of target:{len(__self__.current_targets)}',log_level.DEVELOP)
+        __self__.log(f'Number of target:{len(__self__.current_targets)}',log_level.INFO)
         map = __self__.field
         bot_x = __self__.current_pos[0]
         bot_y = __self__.current_pos[1]
         directions = {}
         #Map is indexed [y,x] Select the possible next steps
-        with open("debug_map.csv","w") as f:
-            np.savetxt(f,map,delimiter=";")
         #region west
         w = (bot_y,max(bot_x-1,0))
         if __self__.walls [w[0],w[1]] > 0 and (w[1],w[0]) not in __self__.opponents:
