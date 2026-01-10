@@ -118,3 +118,6 @@ Stage 2
     ruby runner.rb --seed 21mgm61s41 ..\found_gems\     5043    --> 6679    --> 7534    --> 7939    --> 7534
 2025-01-08
     ruby runner.rb --seed uhhowezw ..\found_gems\   3090    --> 6948    --> 5720    --> 6539
+2025-01-09
+    ruby runner.rb --seed e4fnst5qs ..\found_gems\  296 --> 5943
+    ruby runner.rb --seed 26uk0hsdqo ..\found_gems\ 0   --> 335
