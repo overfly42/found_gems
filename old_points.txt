@@ -105,7 +105,7 @@ ruby runner.rb  --seed 1az6qhq ..\found_gems\ 2222
     ruby runner.rb --seed 3jsl7ib3m   ..\found_gems\    crash/19097   20144 --> 20414
     ruby runner.rb --seed 8lu73cqe7   ..\found_gems\    18753
     ruby runner.rb --seed 2er3vcmlah   ..\found_gems\   1137
-    ruby runner.rb --seed 2er3vcmlah   ..\found_gems\
+    ruby runner.rb --seed 2er3vcmlah   ..\found_gems\   
 
 Stage 2
 2025-01-06
@@ -119,5 +119,11 @@ Stage 2
 2025-01-08
     ruby runner.rb --seed uhhowezw ..\found_gems\   3090    --> 6948    --> 5720    --> 6539
 2025-01-09
-    ruby runner.rb --seed e4fnst5qs ..\found_gems\  296 --> 5943
-    ruby runner.rb --seed 26uk0hsdqo ..\found_gems\ 0   --> 335
+
+    ruby runner.rb --seed e4fnst5qs ..\found_gems\  296 --> 5943 --> 4861
+    ruby runner.rb --seed 26uk0hsdqo ..\found_gems\ 0   --> 335 -->3764
+2025-01-10
+        ruby runner.rb --seed oh7zeutll ..\found_gems\  0   --> 3118
+        ruby runner.rb --seed cddyi31rn ..\found_gems\ 3936 --> 5376
+2025-01-11
+        ruby runner.rb --seed 1x1ibww3fm ..\found_gems\ 2779    --> 3832    ->  4238    -> 5038
