@@ -126,4 +126,9 @@ Stage 2
         ruby runner.rb --seed oh7zeutll ..\found_gems\  0   --> 3118
         ruby runner.rb --seed cddyi31rn ..\found_gems\ 3936 --> 5376
 2025-01-11
-        ruby runner.rb --seed 1x1ibww3fm ..\found_gems\ 2779    --> 3832    ->  4238    -> 5038
+        ruby runner.rb --seed 1x1ibww3fm ..\found_gems\ 2779    --> 3832    ->  4238    -> 5038 ->3645
+2025-01-12
+    ruby runner.rb --seed 2gete3q0xg ..\found_gems\  overtime
+    ruby runner.rb --seed 1ucr6bfa5p ..\found_gems\ 4225 --> 3728   --> 3875
+2025-01-13
+    ruby runner.rb --seed rdb4maebv  ..\found_gems\    3813
