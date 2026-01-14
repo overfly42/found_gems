@@ -63,7 +63,7 @@ class gem_bot:
         __self__.signal_radius = 1
         __self__.gem_duration = 1000
         #Base Config
-        __self__.current_log_level = log_level.GAME
+        __self__.current_log_level = log_level.DEVELOP
         __self__.decay_factor = DECAY_FACTOR
         __self__.map_max_distance = MAP_STOP_DISTANCE
         # Current State
@@ -344,224 +344,20 @@ class gem_bot:
         
         # np.savetxt(f'data/{__self__.current_tick:04d}.csv',gaus)
         # np.savetxt(f'data2/{__self__.current_tick:04d}.csv',__self__.singal_map)
-        __self__.gem_options = {(y,x) for x,y in np.argwhere((__self__.singal_map*__self__.walls) > 0.95 )}
-        __self__.gem_options.difference_update(__self__.anchor_views[__self__.current_pos])
-        if len(__self__.gem_options) > 30:
-            __self__.gem_options = set(random.sample(sorted(__self__.gem_options),30))
+        current_value = 1.00
+        delta_value = 0.01
+        end_value = 0.8
+        min_elements = 1
+        __self__.gem_options = {}
+        while len(__self__.gem_options) < min_elements and current_value > end_value:
+            __self__.gem_options = {(y,x) for x,y in np.argwhere((__self__.singal_map*__self__.walls) > current_value )}
+            __self__.gem_options.difference_update(__self__.anchor_views[__self__.current_pos])
+            __self__.gem_options.difference_update(__self__.void_fields)
+            current_value -= delta_value
+        if current_value > end_value:
+            __self__.field_changed[FIELD_CHANGED_GEMS] = True
+
         
-        # def __analyse_signal(self, signal_level: float):
-    #     if not self.use_signal:
-    #         return
-
-    #     # Ignore first tick
-    #     if not hasattr(self, "signal_initialized"):
-    #         return
-
-    #     bot = self.current_pos
-
-    #     # Remove known gems from the signal
-    #     residual = signal_level
-    #     for g in self.gems:
-    #         d = self.calc_distance_diagonal(g, bot)
-    #         residual -= self.__signal_distance_to_signal_level(d)
-
-    #     # No unknown gems in range
-    #     if residual <= 0:
-    #         self.signal_belief *= 0.9
-    #         return
-
-    #     # Build distance map
-    #     dist = self.__build_signal_map()
-    #     expected = self.__signal_distance_to_signal_level(dist)
-
-    #     # How well would each tile explain the measured residual?
-    #     error = np.abs(expected - residual)
-
-    #     # Convert error → likelihood (Gaussian noise model)
-    #     sigma = 0.03
-    #     likelihood = np.exp(-(error ** 2) / (2 * sigma * sigma))
-
-    #     # Zero impossible locations
-    #     likelihood[self.walls == 0] = 0
-    #     for v in self.void_fields:
-    #         likelihood[v[1], v[0]] = 0
-
-    #     # Bayesian update
-    #     self.signal_belief *= likelihood
-    #     self.signal_belief += 1e-9   # prevent collapse
-    #     self.signal_belief /= self.signal_belief.sum()
-
-    #     # Pick strong candidates
-    #     threshold = np.max(self.signal_belief) * 0.7
-    #     candidates = np.argwhere(self.signal_belief >= threshold)
-
-    #     new_opts = set((int(x[1]), int(x[0])) for x in candidates)
-
-    #     # Remove visible tiles
-    #     new_opts -= self.anchor_views.get(bot, set())
-
-    #     self.gem_options = new_opts
-
-    #     # Promote very strong beliefs to real gems
-    #     for y, x in candidates:
-    #         if self.signal_belief[y, x] > 0.25:
-    #             pos = (x, y)
-    #             if pos not in self.gems:
-    #                 self.gems[pos] = self.gem_duration
-    #                 self.field_changed[FIELD_CHANGED_GEMS] = True
-
-    # def __analyse_signal(__self__,signal_level:float):
-    #     if not __self__.use_signal:
-    #         return
-    #     __self__.signal_history.append({'tick':__self__.current_tick,'signal_level':signal_level,'pos':__self__.current_pos})
-    #     if len(__self__.signal_history) < 2:
-    #         return
-    #     #remove known gems from signal level
-    #     singal_level_ignore_gems = set()
-    #     for gem in __self__.gems.keys():
-    #         gem_dist = __self__.calc_distance_diagonal(gem,__self__.current_pos)
-    #         gem_singal_strength = __self__.__signal_distance_to_signal_level(gem_dist)
-    #         signal_level -= gem_singal_strength
-    #         __self__.log(f'Removed known gem at {gem} with distance {gem_singal_strength} from signal level, new signal level {signal_level}',log_level.DEVELOP)
-    #         singal_level_ignore_gems.add(gem)
-    #     signal_dif_eps = 0.05
-    #     signal_dif = __self__.signal_history[-1]['signal_level'] - __self__.signal_history[-2]['signal_level']
-    #     __self__.log(f'Signal level changed by {signal_dif} from {__self__.signal_history[-2]["signal_level"]} to {__self__.signal_history[-1]["signal_level"]}',log_level.DEVELOP)
-    #     if signal_dif < -signal_dif_eps:
-    #         __self__.log(f'Signal decreased, GEM vanished',log_level.DEVELOP)
-    #         __self__.estimated_gems = max(0,__self__.estimated_gems -1)
-    #     elif signal_dif > signal_dif_eps or __self__.signal_history[-2]['signal_level'] == 0 and signal_level > 0:#special handling of first gem appears.
-    #         __self__.log(f'Signal increased, GEM appeared',log_level.DEVELOP)
-    #         __self__.estimated_gems = min(__self__.max_gems,__self__.estimated_gems +1)
-    #     __self__.log(f'Estimated gems in the field: {__self__.estimated_gems}',log_level.DEVELOP)
-    #     vectorizer = np.vectorize(__self__.__signal_distance_to_signal_level)
-    #     signal_map = __self__.__build_signal_map()
-    #     mask = vectorizer(signal_map)
-    #     mask = abs(mask - __self__.signal_history[-1]['signal_level']) < 0.001
-    #     possible_positions = {(int(x[0]), int(x[1])) for x in np.argwhere(mask)}
-    #     __self__.log(f'Possible gem positions from signal analysis: {possible_positions}',log_level.DEVELOP)
-    #     __self__.signal_history[-1]['possible_positions'] = possible_positions
-    #     __self__.gem_options.update(possible_positions)
-    #     __self__.gem_options.difference_update(__self__.anchor_views.get(__self__.current_pos,set()))
-    #     removal_gems = set()
-    #     singal_eps = 0.01
-    #     for gem in __self__.gem_options:
-    #         if (gem[1],gem[0]) in __self__.void_fields:
-    #             removal_gems.add(gem)
-    #             continue
-    #         if gem in __self__.void_fields:
-    #             removal_gems.add(gem)
-    #             continue
-    #         if __self__.walls[gem[0],gem[1]] == 0:
-    #             removal_gems.add(gem)
-    #             continue
-    #     __self__.gem_options.difference_update(removal_gems)
-    # #     #collect last relevant singal calcualtions:
-    # #     # last_singals = [x['possible_positions'] for x in __self__.signal_history[-20:] if 'possible_positions' in x]
-    # #     # __self__.log(f'Last singal possible positions: {last_singals}',log_level.DEVELOP)
-    # #     # __self__.gem_options = {k:k for k in set.intersection(*last_singals)}
-    # #     # __self__.log(f'Gem options after intersection: {__self__.gem_options.keys()}',log_level.DEVELOP)
-    # #     # for x in __self__.gem_options.keys():
-    # #     #     count = len([True for _ in __self__.signal_history if x in _.get("possible_positions", set())])
-    # #     #     __self__.log(f'Predicted gem at position: {x} was found {count}',log_level.DEVELOP)
-    # #     #     if count >= 3:
-    # #     #         __self__.log(f'Confirmed gem at position: {x}',log_level.DEVELOP)
-    # #     #         __self__.gems[x] = __self__.gem_duration
-    # #     #         __self__.field_changed[FIELD_CHANGED_GEMS] = True
-    # #     # # Check all existing gems out of view:
-    # #     # bot = __self__.current_pos
-    # #     # removal_gems = set()
-    # #     # for gem in __self__.gems:
-    # #     #     if gem in __self__.anchor_views.get(__self__.current_pos,set()):
-    # #     #         continue
-    # #     #     distance = np.round(__self__.calc_distance_diagonal(bot,gem),6)
-    # #     #     gem_singal_strength = __self__.__signal_distance_to_signal_level(distance)
-    # #     #     __self__.log(f'Known gem at {gem} with distance {distance} has signal strength \n\t{gem_singal_strength}\n\t{signal_level}',log_level.DEVELOP)
-    # #     #     if gem_singal_strength != signal_level and gem not in singal_level_ignore_gems:
-    # #     #         removal_gems.add(gem)
-    # #     # for gem in removal_gems:
-    # #     #     __self__.gems.pop(gem, None)
-
-    # #     #Remove all known signals
-    # # #     for gem in __self__.gems.keys():
-    # # #         gem_dist = __self__.calc_distance(gem,__self__.current_pos)
-    # # #         gem_singal_strength = __self__.__singal_distance_to_signal_level(gem_dist)
-    # # #         signal_level -= gem_singal_strength
-    # # #         __self__.log(f'Removed known gem at {gem} with distance {gem_singal_strength} from signal level, new signal level {signal_level}',log_level.DEBUG)
-    # # #     if signal_level > 1:
-    # # #         __self__.log(f'Invalid signal level {signal_level}, ignoring',log_level.ERROR)
-    # # #         return
-    # # #     if signal_level <= 0:
-    # # #         __self__.log(f'Signal level is 0, no gem in range, abort singal analysis',log_level.INFO)
-    # # #         return
-    # # #     distance = __self__.__signal_singal_level_to_distance(signal_level)
-    # # #     __self__.log(f'Signal level {signal_level} indicates a gem at distance {distance}',log_level.INFO)
-    # # #     #Distance is hypotenuse of an rectified triangle. Distances in x and y from bot are Karthets
-    # # #     if distance > __self__.height + __self__.width:
-    # # #         __self__.log(f'Calculated distance {distance} is larger than map size, ignoring',log_level.WARNING)
-    # # #         return
-    # # #     hyptoenuse = distance**2
-    # # #     if isinstance(hyptoenuse,complex):
-    # # #         __self__.log(f'type of hyptoenuse before rounding: {type(hyptoenuse)}',log_level.DEVELOP)
-    # # #         return
-    # # #     hyptoenuse = round(hyptoenuse)
-    # # #     __self__.log(f'Calculated hypotenuse: {hyptoenuse}',log_level.DEBUG)
-    # # #     new_options = set()
-    # # #     for x in range(1,int(distance)):
-    # # #         y_squared = np.sqrt( hyptoenuse - x**2)
-    # # #         if y_squared.is_integer():
-    # # #             __self__.log(f'Calculating possible gem positions for x distance {x} to {x**2}',log_level.DEBUG)
-    # # #             __self__.log(f'Calculated y squared: {y_squared}',log_level.DEBUG)
-    # # #             y = int(y_squared)
-    # # #             new_options.add( ( __self__.current_pos[0] + x , __self__.current_pos[1] + y ) )
-    # # #             new_options.add( ( __self__.current_pos[0] + x , __self__.current_pos[1] - y ) )
-    # # #             new_options.add( ( __self__.current_pos[0] - x , __self__.current_pos[1] + y ) )
-    # # #             new_options.add( ( __self__.current_pos[0] - x , __self__.current_pos[1] - y ) )
-    # # #         else:
-    # # #             __self__.log(f'Y squared {y_squared} is not integer for x distance {x}, skipping',log_level.INFO)
-    # # #   # Check for new Options, what is not reallistic:
-    # # #     for opt in new_options:
-    # # #         singal_values = __self__.gem_options.get(opt,{}).get('singal_values',[])
-    # # #         tick_values = __self__.gem_options.get(opt,{}).get('tick_values',[])
-    # # #         singal_values.append(signal_level)
-    # # #         tick_values.append(__self__.current_tick)
-    # # #         __self__.gem_options[opt] = {
-    # # #             'signal_values': singal_values,
-    # # #             'tick_values': tick_values
-    # # #         }
-    # # #     __self__.log(f'Predicted new gems at positions: {new_options}',log_level.INFO)
-    # # #     #Clean up
-    # # #     cleanup_keys = set()
-    # # #     __self__.log(f'Cleaning up gem options, currently {len(cleanup_keys)} options stored',log_level.DEVELOP)
-    # # #     # cleanup_keys.update(__self__.anchor_views.get(__self__.current_pos,set()))
-    # # #     timeout_tick = __self__.current_tick - __self__.gem_duration
-    # # #     for k,v in __self__.gem_options.items():
-    # # #         #Remove old options
-    # # #         tick_values = v.get('tick_values',[])
-    # # #         if k in __self__.void_fields:
-    # # #             cleanup_keys.add(k)
-    # # #             __self__.log(f'Removing gem option {k}, marked as void field',log_level.DEBUG)
-    # # #             continue
-    # # #         if any([tick < timeout_tick for tick in tick_values]):
-    # # #             cleanup_keys.add(k)
-    # # #             __self__.log(f'Removing gem option {k}, too old',log_level.DEBUG)
-    # # #             continue
-    # # #         if k not in new_options and len(tick_values) < 2:
-    # # #             cleanup_keys.add(k)
-    # # #             __self__.log(f'Removing gem option {k}, not enough signals received yet',log_level.DEBUG)
-    # # #             continue
-    # # #         if k[0] < 0 or k[0] >= __self__.width or k[1] < 0 or k[1] >= __self__.height:
-    # # #             cleanup_keys.add(k)
-    # # #             __self__.log(f'Ignoring gem option {k}, out of bounds',log_level.DEBUG)
-    # # #             continue
-    # # #         if __self__.walls[k[1],k[0]] == 0:
-    # # #             cleanup_keys.add(k)
-    # # #             __self__.log(f'Ignoring gem option {k}, wall in the way',log_level.DEBUG)
-    # # #             continue
-    # # #     for k in cleanup_keys:
-    # #         # __self__.gem_options.pop(k,None)
-    # #         # __self__.log(f'Removed gem option at {k}',log_level.INFO)
-
     #endregion
     def __get_explorartion_fields(__self__)->list[tuple[int,int]]:
         __self__.log('No gems visible, adding nearest unseen field as target')
@@ -819,11 +615,11 @@ class gem_bot:
                 color = '#FFFF00'
             elif target in __self__.opponents:
                 color = '#FF0000'
+            elif target in __self__.gem_options:
+                color = '#F000FF'
             else:
                 color = '#00FF00'
             hightlight.append([int(target[0]),int(target[1]),color])
-        for gem_pos in __self__.gem_options:
-            hightlight.append([int(gem_pos[0]),int(gem_pos[1]),"#FF0000"])
         return ' '+json.dumps(maps)
     def select_move(__self__)->str:
         '''
