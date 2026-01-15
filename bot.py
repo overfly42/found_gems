@@ -620,6 +620,8 @@ class gem_bot:
             else:
                 color = '#00FF00'
             hightlight.append([int(target[0]),int(target[1]),color])
+        for pos in __self__.void_fields:
+            hightlight.append([int(pos[0]),int(pos[1]),'#FFFFFF'])
         return ' '+json.dumps(maps)
     def select_move(__self__)->str:
         '''
