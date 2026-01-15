@@ -100,14 +100,10 @@ class gem_bot:
 
     def main(__self__):
         for line in sys.stdin:
-            start = timer()
             data = json.loads(line) #
             __self__.analyse(data)
             __self__.plan()
             __self__.select_move()
-            end = timer()
-            eleapsed_time = end - start
-            __self__.processing_time_limits_exceded.append(max(0, eleapsed_time - 0.1))
     #region analyse data
     def analyse(__self__,data):
         if __self__.first_tick:
@@ -115,7 +111,6 @@ class gem_bot:
         __self__.current_tick = data.get("tick")
         __self__.current_pos = (data['bot'][0],data['bot'][1])
         __self__.field_changed = {k:False for k in __self__.field_changed}
-        __self__.__analyse_timing()
         __self__.__analyse_bot()
         __self__.__analyse_walls(data.get("wall",[]))
         __self__.__analyse_floor(data.get("floor",[]))
@@ -140,25 +135,6 @@ class gem_bot:
         for x in range(__self__.width):
             for y in range(__self__.height):
                 __self__.unseen_fields.add((x,y))
-    def __analyse_timing(__self__):
-        if not __self__.processing_time_limits_exceded:
-            return
-        overtime = sum(__self__.processing_time_limits_exceded)
-        max_exploration_field_05 = MAX_EXLORATION_FIELDS * 3
-        max_exploration_field_10 = MAX_EXLORATION_FIELDS * 2
-        max_exploration_field_15 = MAX_EXLORATION_FIELDS
-        if __self__.processing_time_limits_exceded[-1] > 0:
-            __self__.exploration_field_limit = max(1,__self__.exploration_field_limit - 1)
-            __self__.log(f'Processing time limit exceeded by {__self__.processing_time_limits_exceded[-1]:.6f} seconds. Reducing exploration field limit to {__self__.exploration_field_limit}',log_level.WARNING)
-        elif overtime < 0.5 and len(__self__.processing_time_limits_exceded) >= 20 and sum(__self__.processing_time_limits_exceded[-20:]) == 0:
-            __self__.exploration_field_limit = min(max_exploration_field_05,__self__.exploration_field_limit + 1)
-            __self__.log(f'Processing time within limits, increasing exploration field limit to {__self__.exploration_field_limit}',log_level.INFO)
-        elif overtime < 1.0 and len(__self__.processing_time_limits_exceded) >= 20 and sum(__self__.processing_time_limits_exceded[-20:]) == 0:
-            __self__.exploration_field_limit = min(max_exploration_field_10,__self__.exploration_field_limit + 1)
-            __self__.log(f'Processing time within limits, increasing exploration field limit to {__self__.exploration_field_limit}',log_level.INFO)
-        elif overtime < 1.5 and len(__self__.processing_time_limits_exceded) >= 20 and sum(__self__.processing_time_limits_exceded[-20:]) == 0:
-            __self__.exploration_field_limit = min(max_exploration_field_15,__self__.exploration_field_limit + 1)
-            __self__.log(f'Processing time within limits, increasing exploration field limit to {__self__.exploration_field_limit}',log_level.INFO)
     def __analyse_bot(__self__):
         # Checks the bot position if it affects any changes in plan
         if __self__.current_pos in __self__.gems:

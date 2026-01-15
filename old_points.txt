@@ -134,4 +134,8 @@ Stage 2
     ruby runner.rb --seed rdb4maebv  ..\found_gems\    3813 --> 2451 --> 2403 --> 3104 --> 2451 --> 3885    --> 3506
     --> 3919
     New Version --> 2159 --> 2159   --> 2159
+    Old Version 3158 --> 3158 --> 3158 --> 3158
+    without timer --> 1841 --> 1841 -
 2025-01-15
+    ruby runner.rb --seed 1zzhxnsb2p  ..\found_gems\    TIMEOUT --> 754 --> 495  --> 758    --> 495 --> 495 --> 744 --> 754 --> 754 --> 495
+    Old version 3831 --> 3831 --> 3831 --> 3831 --> 3831
