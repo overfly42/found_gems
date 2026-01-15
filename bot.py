@@ -7,7 +7,6 @@ import os
 import sys, json, random
 from collections import deque
 import numpy as np
-from timeit import default_timer as timer
 
 from enum import Enum
 
@@ -63,7 +62,7 @@ class gem_bot:
         __self__.signal_radius = 1
         __self__.gem_duration = 1000
         #Base Config
-        __self__.current_log_level = log_level.DEVELOP
+        __self__.current_log_level = log_level.GAME
         __self__.decay_factor = DECAY_FACTOR
         __self__.map_max_distance = MAP_STOP_DISTANCE
         # Current State
