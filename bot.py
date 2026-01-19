@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from concurrent.futures import ThreadPoolExecutor
 from functools import reduce
+from collections import Counter
 import operator
 
 import os
@@ -62,7 +63,7 @@ class gem_bot:
         __self__.signal_radius = 1
         __self__.gem_duration = 1000
         #Base Config
-        __self__.current_log_level = log_level.GAME
+        __self__.current_log_level = log_level.DEVELOP
         __self__.decay_factor = DECAY_FACTOR
         __self__.map_max_distance = MAP_STOP_DISTANCE
         # Current State
@@ -301,6 +302,18 @@ class gem_bot:
     def __analyse_signal(__self__,singal_level: float):
         if not __self__.use_signal:
             return
+        __self__.signal_history.append({'pos':__self__.current_pos,'singal_level':singal_level})
+        if len(__self__.signal_history) > 1:
+            last_level = __self__.signal_history[-2]['singal_level']
+            delta = last_level * 0.1 #check how the change is, if more than 10 percent, assume gem found
+            if last_level + delta < singal_level:
+                __self__.log('New Gem appeared',log_level.INFO)
+                __self__.signal_history[-1]['gem_appeard']=True
+            elif last_level - delta > singal_level:
+                __self__.log('Gem disappered',log_level.INFO)
+                __self__.signal_history[-1]['gem_appeard']=False
+            else:
+                __self__.signal_history[-1]['gem_appeard']=False
         for pos in __self__.gems:
             reduction = __self__.__signal_distance_to_signal_level(__self__.calc_distance_diagonal((pos[1],pos[0]),__self__.current_pos))
             __self__.log(f'reducing singal {singal_level} by {reduction}')
@@ -315,23 +328,58 @@ class gem_bot:
         else:
             __self__.singal_map = gaus
         __self__.singal_map = np.nan_to_num(__self__.singal_map,nan=0.0)
-        __self__.singal_map[__self__.singal_map < 0.7] = 0
+        __self__.singal_map[__self__.singal_map < 0.5] = 0
         
         # np.savetxt(f'data/{__self__.current_tick:04d}.csv',gaus)
-        # np.savetxt(f'data2/{__self__.current_tick:04d}.csv',__self__.singal_map)
+        np.savetxt(f'data2/{__self__.current_tick:04d}.csv',__self__.singal_map)
         current_value = 1.00
         delta_value = 0.001
         end_value = 0.8
         min_elements = 1
         __self__.gem_options = {}
+
+        # max_level = np.max(__self__.singal_map)
+        # if max_level > 0:
+        #     max_levels = {(y,x) for x,y in np.argwhere(__self__.singal_map >= max_level)}
+        #     # max_levels = {(x,y) for x,y in max_level}
+        #     __self__.log(f'len {len(max_levels)}',log_level.DEVELOP)
+        #     __self__.log(f'levels: {max_levels}',log_level.DEVELOP)
+        #     __self__.log(f'pos: {__self__.current_pos}',log_level.DEVELOP)
+        #     nearest_position = sorted(max_levels,key = lambda x : __self__.calc_distance_diagonal(x,__self__.current_pos),reverse=True)
+        #     __self__.log(f'{len(nearest_position)}',log_level.DEVELOP)
+        #     nearest_position = nearest_position[0]
+        #     max_x = max(nearest_position[1],__self__.current_pos[0])
+        #     min_x = min(nearest_position[1],__self__.current_pos[0])
+        #     max_y = max(nearest_position[0],__self__.current_pos[1])
+        #     min_y = min(nearest_position[0],__self__.current_pos[1])
+        #     singal_map = np.copy(__self__.singal_map)
+        #     mask = (singal_map >= min_x) & (singal_map <= max_x) & (singal_map >= min_y) & (singal_map <= max_y)
+        #     singal_map[~mask] = 0
+        # else:
+        singal_map = __self__.singal_map
+
         while len(__self__.gem_options) < min_elements and current_value > end_value:
-            __self__.gem_options = {(y,x) for x,y in np.argwhere((__self__.singal_map*__self__.walls) > current_value )}
+            __self__.gem_options = {(y,x) for x,y in np.argwhere((singal_map*__self__.walls) > current_value )}
             __self__.gem_options.difference_update(__self__.anchor_views[__self__.current_pos])
             __self__.gem_options.difference_update(__self__.void_fields)
             current_value -= delta_value
         if current_value > end_value:
             __self__.field_changed[FIELD_CHANGED_GEMS] = True
-
+        __self__.signal_history[-1]['gems']=__self__.gem_options
+        #Check last n cycles for occourences
+        last_opption_count = 10
+        last_option_min = 8
+        last_options = [x['gems'] for x in __self__.signal_history[-last_opption_count:]]
+        counts = Counter(element for s in last_options for element in s)
+        predicted_gems = dict(counts)
+        __self__.log(f'Predict first stage: {predicted_gems}',log_level.DEVELOP)
+        max_val = max(predicted_gems.values() or [0])
+        max_val = max([max_val,last_option_min])
+        predicted_gems = {pos:value for pos,value in predicted_gems.items() if value == max_val}
+        __self__.log(f'Predict second step: {predicted_gems}',log_level.DEVELOP)
+        if len(predicted_gems) <= __self__.max_gems - len(__self__.gems):
+            for key in predicted_gems:
+                __self__.gems[key] = 50
         
     #endregion
     def __get_explorartion_fields(__self__)->list[tuple[int,int]]:
