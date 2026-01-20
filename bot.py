@@ -529,7 +529,9 @@ class gem_bot:
             __self__.log('Field has not changed, reusing old field',log_level.DEVELOP)
             return
         possible_targets = __self__.__collect_targets()
-        target_order = [PLAN_SIGNAL,PLAN_UNKNOWN,PLAN_PATROL]
+        target_order = [PLAN_GEMS,PLAN_SIGNAL,PLAN_UNKNOWN,PLAN_PATROL]
+        if __self__.cycling_detected:
+            target_order = target_order[2:]
         relevant_elements = list()
         relevant_values = list()
         for target in target_order:
@@ -539,8 +541,8 @@ class gem_bot:
             if len(relevant_elements) > 0:
                 break
         #Always go for gems to be seen
-        relevant_elements.extend(possible_targets[PLAN_GEMS][PLAN_ELEMENTS])
-        relevant_values.extend(possible_targets[PLAN_GEMS][PLAN_VALUES])
+        # relevant_elements.extend(possible_targets[PLAN_GEMS][PLAN_ELEMENTS])
+        # relevant_values.extend(possible_targets[PLAN_GEMS][PLAN_VALUES])
         #Always react on opponents
         relevant_elements.extend(possible_targets[PLAN_OPPONENTS][PLAN_ELEMENTS])
         relevant_values.extend(possible_targets[PLAN_OPPONENTS][PLAN_VALUES])
