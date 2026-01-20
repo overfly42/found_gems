@@ -331,7 +331,7 @@ class gem_bot:
         __self__.singal_map[__self__.singal_map < 0.5] = 0
         
         # np.savetxt(f'data/{__self__.current_tick:04d}.csv',gaus)
-        np.savetxt(f'data2/{__self__.current_tick:04d}.csv',__self__.singal_map)
+        # np.savetxt(f'data2/{__self__.current_tick:04d}.csv',__self__.singal_map)
         current_value = 1.00
         delta_value = 0.001
         end_value = 0.8
