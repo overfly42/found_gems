@@ -319,7 +319,7 @@ class gem_bot:
             __self__.log(f'reducing singal {singal_level} by {reduction}')
             singal_level -= reduction
         signal_distance = __self__.__signal_signal_level_to_distance(singal_level)
-        gaus = __self__.__gaussian_distance_ring((__self__.current_pos[1],__self__.current_pos[0]),signal_distance,sigma=1.5)
+        gaus = __self__.__gaussian_distance_ring((__self__.current_pos[1],__self__.current_pos[0]),signal_distance,sigma=3)
         if isinstance(__self__.singal_map,np.ndarray):
             __self__.singal_map = 0.9 * __self__.singal_map # decay the past
             __self__.singal_map += gaus

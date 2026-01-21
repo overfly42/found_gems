@@ -148,3 +148,8 @@ Stage 2
     ruby runner.rb --seed 1fpu92i39t  ..\found_gems\  5007 --> 7545 --> 8464
 2025-01-20
     ruby runner.rb --seed ig76538d5 --profile ../found_gems -->  43400 --> 71452
+2025-01-21
+    ruby runner.rb --seed spqx0il4m --profile ../found_gems
+    ruby runner.rb --seed 1fy8g0lr6l ../found_gems  5602    --> 7170
+    ruby runner.rb --seed w6j3rpt4u ../found_gems  7081  -> 8424
+    ruby runner.rb --seed 1fusrubuhf ../found_gems  1871 --> 2676
