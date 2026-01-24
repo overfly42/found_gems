@@ -19,12 +19,13 @@ NOT_SEEN_FIELDS = 7
 NOT_SEEN_THREASHOLD = 100
 EXPLORATION_FIELD_VALUE = 150
 POSSIBLE_GEM_VALUE = 300
-CYCLING_RELEVANT_FIELDS = 30
+CYCLING_RELEVANT_FIELDS = 50
 MAX_CYCLING_OCCOURENCES = 5
 MAP_STOP_DISTANCE = 4000
 MAX_EXLORATION_FIELDS = 10
 EPS = 1e-6
 NOT_REACHABLE_FIELD = 1000
+LAST_FIELD_MOD = 0.75
 # FIELD Changed Parameter
 FIELD_CHANGED_FIELD = 'fcf'
 FIELD_CHANGED_GEMS = 'fcg'
@@ -308,6 +309,8 @@ class gem_bot:
             __self__.gem_options.difference_update(__self__.void_fields)
             __self__.gem_computed.difference_update(__self__.void_fields)
             current_value -= delta_value
+        if len(__self__.gem_options) > MAX_EXLORATION_FIELDS:
+            __self__.gem_options = set(sorted(__self__.gem_options,key=lambda x:__self__.calc_distance(x,__self__.current_pos))[:MAX_EXLORATION_FIELDS])
         if current_value > end_value:
             __self__.field_changed[FIELD_CHANGED_GEMS] = True
         __self__.history[-1]['options']=__self__.gem_options
@@ -520,7 +523,7 @@ class gem_bot:
         last_fields = __self__.history[-CYCLING_RELEVANT_FIELDS:]
         for tick in last_fields:
             pos = tick['pos']
-            __self__.field[pos[1],pos[0]] = __self__.field[pos[1],pos[0]] * 0.25
+            __self__.field[pos[1],pos[0]] = __self__.field[pos[1],pos[0]] * LAST_FIELD_MOD
 
 
     def build_field(__self__,target:tuple[int,int],target_value:int=1,decay:float|None='use_self',stop_at_distance:int=None)->np.ndarray:

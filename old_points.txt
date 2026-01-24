@@ -157,3 +157,19 @@ Stage 2
     ruby runner.rb --seed 1a3lgaa7sp  ../found_gems  2517 --> 3851
     ruby runner.rb --seed 90yktxch9  ../found_gems  6053 --> 4651 -> 5094 -> 3842 -> 4601 -> 4792
     ruby runner.rb --seed 24lc3d0fd1 --profile ../found_gems   84104 -> 82576 -> 86313
+2025-01-24
+    ruby runner.rb --seed 1eqrriapvq ../found_gems  2452
+    - Anpassung cycle fields von 30 auf 50 -> 3832
+    - Anpassung reihenfolge Planing -> 3683
+    - Last_field_mod -> 0.5 -> 2452
+    - cycle fields auf 50
+    - last_field_mod -> 0.75 / cycle -> 50 exploration_fields / Begrenzung Options --> 4065
+    ruby runner.rb --seed 1on2578eo ../found_gems 8395
+    - Mit beiden anpassungen -> 4160
+    - Anpassung cycle fields von 50 auf 20 -> 4439
+    - Cycle fields 20 auf 50 / Änderung Planing -> 6498
+    - Cycle fields auf 30 --> 8395
+    - last_field mod von 0.25 auf 0.75 --> 8445
+    - last_field_mod 0.5 cycles auf 50
+    - last_field_mod 0.75 cycle 50 Begrenzung Options -> 8553
+    ruby runner.rb --seed 18uvm8youc --profile ../found_gems   100748
