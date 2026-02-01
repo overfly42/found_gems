@@ -34,9 +34,9 @@ if __name__ == "__main__":
     # ft =  field_type(field[2,2])
     # print(ft)
     # print([tuple(x) for x in np.argwhere(field >= field_type.wall.value)])
-    w = World()
-    w.update_config(20,10)
-    w.field[3,2] = field_type.wall.value
-    print(w.field)
-    p = Planer(w)
-    print(p.path_planing((2,2),(2,4)))
+    # w = World()
+    # w.update_config(20,10)
+    # w.field[3,2] = field_type.wall.value
+    # print(w.field)
+    # p = Planer(w)
+    # print(p.path_planing((2,2),(2,4)))

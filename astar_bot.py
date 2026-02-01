@@ -267,10 +267,7 @@ class signal_bot:
             highlight.append([int(pos[1]),int(pos[0]),'#FFFFFF'])
         for pos in __self__.planer.current_path:
             highlight.append([int(pos[1]),int(pos[0]),'#F00000'])
-        # highlight.append([27,38,'#61FF45'])
-        # highlight.append([27,39,'#61FF45'])
-        # highlight.append([38,27,'#61FF45'])
-        # highlight.append([39,27,'#61FF45'])
+
         maps['highlight'] = highlight
         return ' ' + json.dumps(maps)
     def select_move(__self__):
@@ -285,4 +282,6 @@ class signal_bot:
             move = DIRS_INV[direction]
         else:
             move = random.choice(list(DIRS.keys()))
+        if move == 'WAIT':
+            __self__.planer.current_path.clear()
         print(f'{move}{__self__.highlight_targets()}',flush=True)

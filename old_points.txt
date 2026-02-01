@@ -182,4 +182,4 @@ Stage 2
 New implementation Dijstra
 2025-02-01
     ruby runner.rb --seed 17fmcxy588 ../found_gems 5939
-    ruby runner.rb --seed 24b62blwiq ../found_gems 4292
+    ruby runner.rb --seed 24b62blwiq ../found_gems 4292 -> 4361
