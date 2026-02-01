@@ -1,0 +1,740 @@
+from concurrent.futures import ThreadPoolExecutor
+from functools import reduce
+from collections import Counter, defaultdict
+import operator
+
+import os
+import math
+import sys, json, random
+from collections import deque
+import numpy as np
+
+from enum import Enum
+
+USE_MULTITHREADING = True
+DECAY_FACTOR = 0.8
+DECAY_CHANGE = 0.9
+OPPONENT_PENALTY_TTL = 0.01
+NOT_SEEN_FIELDS = 7
+NOT_SEEN_THREASHOLD = 100
+EXPLORATION_FIELD_VALUE = 150
+POSSIBLE_GEM_VALUE = 300
+CYCLING_RELEVANT_FIELDS = 50
+MAX_CYCLING_OCCOURENCES = 5
+MAP_STOP_DISTANCE = 4000
+MAX_EXLORATION_FIELDS = 20  # Increased from 10 to evaluate more candidates
+EPS = 1e-6
+NOT_REACHABLE_FIELD = 1000
+LAST_FIELD_MOD = 0.75
+# FIELD Changed Parameter
+FIELD_CHANGED_FIELD = 'fcf'
+FIELD_CHANGED_GEMS = 'fcg'
+FIELD_CHANGED_OPPONENTS = 'fco'
+FIELD_CHANGED_WALLS = 'fcw'
+FIELD_CHANGED_VOID = 'fcv'
+FIELD_CHANGED_TARGETS = 'fct'
+# Planing Parameter
+PLAN_GEMS = 'known_gems'
+PLAN_COMPUTED = 'computed_gems'
+PLAN_SIGNAL = 'potential_gems'
+PLAN_UNKNOWN = 'exploration'
+PLAN_OPPONENTS = 'opponents'
+PLAN_PATROL = 'patrol'
+PLAN_ELEMENTS = 'relevant_elements'
+PLAN_VALUES = 'relvant_values'
+
+random.seed(1)
+class log_level(Enum):
+    DEBUG = 1
+    INFO = 2
+    WARNING =3
+    ERROR =4
+    DEVELOP = 5
+    GAME =6
+
+class gem_bot:
+    '''
+        Gem Bot is a second implementation for the game hidden gems.
+    '''
+    def __init__(__self__):
+        #Game Config
+        __self__.visibility_range = 100
+        __self__.max_gems = 0
+        __self__.use_signal = False
+        __self__.signal_radius = 1
+        __self__.gem_duration = 1000
+        #Base Config
+        __self__.current_log_level = log_level.DEVELOP
+        __self__.decay_factor = DECAY_FACTOR
+        __self__.map_max_distance = MAP_STOP_DISTANCE
+        # Current State
+        __self__.first_tick = True
+        __self__.current_tick = 0
+        __self__.current_pos = (0,0)
+        __self__.current_map = None
+        __self__.field_changed = {}
+        __self__.field = None # Distance map from robot     
+        __self__.cycling_detected = False
+        __self__.exploration_field_limit = MAX_EXLORATION_FIELDS
+        # Memory (more than move)
+        __self__.walls = None #Map where each wall is set to 0, free space and unknown to 1
+        __self__.anchor_views = dict() # For each position, store which other positions could be seen
+        __self__.unseen_fields = set()
+        __self__.unseen_fields_history = set()
+        __self__.void_fields = set()
+        __self__.last_seen_fields = dict()
+        __self__.opponents = set()
+        __self__.gems = dict()
+        __self__.gem_options = set()
+        __self__.gem_computed = set()  
+        __self__.floor_tiles = set()
+        __self__.current_targets = list()
+        __self__.map_distance_cache = dict()  
+        __self__.estimated_gems = 0
+        __self__.singal_map = None
+        __self__.history = []
+
+    def main(__self__):
+        for line in sys.stdin:
+            data = json.loads(line) #
+            __self__.analyse(data)
+            __self__.plan()
+            __self__.select_move()
+    #region analyse data
+    def analyse(__self__,data):
+        if __self__.first_tick:
+            __self__.__analyse_first_tick(data)
+        __self__.current_tick = data.get("tick")
+        __self__.current_pos = (data['bot'][0],data['bot'][1])
+        __self__.field_changed = {k:False for k in __self__.field_changed}
+        __self__.__analyse_bot()
+        __self__.__analyse_walls(data.get("wall",[]))
+        __self__.__analyse_floor(data.get("floor",[]))
+        __self__.__analyse_openents(data.get("visible_bots",[]))
+        __self__.__analyse_gems(data.get('visible_gems',[]))  
+        __self__.__analyse_signal(data.get('signal_level',0))  
+        # __self__.__analyse_signal2(data.get('signal_level',0))    
+    def __analyse_first_tick(__self__,data):
+        __self__.log('First Tick',log_level.DEBUG)
+        __self__.first_tick = False
+        __self__.field_changed[FIELD_CHANGED_FIELD] = True
+        __self__.width = data['config']['width']
+        __self__.height = data['config']['height']
+        __self__.max_ticks = data['config']["max_ticks"]
+        __self__.visibility_range = data['config']["vis_radius"]
+        __self__.max_gems = data['config']["max_gems"]
+        __self__.gem_duration = data['config']["gem_ttl"]
+        __self__.use_signal = data['config']["emit_signals"]
+        __self__.signal_radius = data['config']["signal_radius"]
+        __self__.walls = np.ones((__self__.height,__self__.width))
+        for x in range(__self__.width):
+            for y in range(__self__.height):
+                __self__.unseen_fields.add((x,y))
+    def __analyse_bot(__self__):
+        # Checks the bot position if it affects any changes in plan
+        if __self__.current_pos in __self__.gems:
+            __self__.log(f'Collected gem at {__self__.current_pos}',log_level.INFO)
+            __self__.field_changed[FIELD_CHANGED_GEMS] = True
+        if __self__.current_pos in __self__.current_targets:
+             __self__.log(f'Reached target at {__self__.current_pos}',log_level.INFO)
+             __self__.field_changed[FIELD_CHANGED_TARGETS] = True
+        if len(__self__.history) > 0 and __self__.history[-1]['pos'] == __self__.current_pos:
+            __self__.log(f'Bot did not move from {__self__.current_pos}',log_level.WARNING)
+            __self__.field_changed[FIELD_CHANGED_TARGETS] = True
+        __self__.history.append({'pos':__self__.current_pos})
+    def __analyse_walls(__self__,walls:list):
+        for wall in walls:
+            if __self__.walls[wall[1],wall[0]] != 0:
+                __self__.field_changed[FIELD_CHANGED_WALLS] = True
+            __self__.walls[wall[1],wall[0]] = 0 # Set the mask to 0 for walls
+            if (wall[0],wall[1]) in __self__.unseen_fields:
+                __self__.unseen_fields.remove((wall[0],wall[1]))
+    def __analyse_floor(__self__,floor_tiles:list):
+        #Add Field with a list of all visible fields to the anchor list
+        anchor = __self__.anchor_views.get(__self__.current_pos,set())
+        if __self__.current_pos not in __self__.anchor_views:
+            __self__.field_changed[FIELD_CHANGED_FIELD] = True
+            for tile in floor_tiles:
+                tile = tuple(tile)
+                anchor.add(tile)
+                __self__.unseen_fields.discard(tile)
+
+            __self__.anchor_views[__self__.current_pos] = anchor
+        __self__.floor_tiles.update(anchor)
+        #Remove all void fields from unseen fields
+        if __self__.unseen_fields:
+            for tile in __self__.void_fields:
+                __self__.unseen_fields.discard(tile)
+        #Update when a field was seen last
+        __self__.last_seen_fields = {pos:0 if pos in anchor else __self__.last_seen_fields.get(pos,0)+1 for pos in __self__.floor_tiles}
+
+    def __analyse_openents(__self__,opponents:list):
+        __self__.opponents.clear()
+        for opp in opponents:
+            __self__.field_changed[FIELD_CHANGED_OPPONENTS] = True
+            __self__.opponents.add((opp['position'][0],opp['position'][1]))
+            __self__.log(f'Found opponent at {opp["position"]}',log_level.INFO)
+    def __analyse_gems(__self__,gems:list):
+        temp_gem_keys = list(__self__.gems.keys())
+        #Remove Gems from visible positions
+        for visible_field in __self__.anchor_views[__self__.current_pos]:
+            __self__.gems.pop(visible_field,None)
+            __self__.gem_computed.discard(visible_field)
+        #Decrease each seen gem
+        for k,v in __self__.gems.items():
+            __self__.gems[k] = v - 1 #Decrease value by 1 point
+        __self__.gems = {k:v for k,v in __self__.gems.items() if v > 0} #Remove all gems with ttl 0
+        removal_gems = set()
+        for gem in __self__.gems:
+            if gem in __self__.void_fields:
+                removal_gems.add(gem)
+            if __self__.walls[gem[1],gem[0]] == 0:
+                removal_gems.add(gem)
+        for gem in removal_gems:
+            __self__.gems.pop(gem, None)
+            __self__.log(f'Removed gem at {gem}, wall or void field detected',log_level.DEVELOP)
+        #Add new Gems
+        for gem in gems:
+            gem_pos = tuple(gem['position'])
+            __self__.log(f'Found gem at {gem_pos} with ttl {gem["ttl"]}',log_level.INFO)
+            __self__.gems[gem_pos] = gem['ttl']
+            if gem_pos not in temp_gem_keys:
+                __self__.field_changed[FIELD_CHANGED_GEMS] = True
+    def __signal_distance_to_signal_level(__self__,distance:float)->float:
+        if not __self__.use_signal:
+            return 0
+        # Distance formula
+        # s = 1 / (1 + (d/r)²)
+        # With d = distance, r = __self__.signal_radius, s = signal_level
+        signal_level = 1 / (1 + (distance/__self__.signal_radius)**2)
+        signal_level = np.round(signal_level,6)
+        return signal_level
+    def __signal_signal_level_to_distance(__self__,signal_level:float)->float:
+        if not __self__.use_signal:
+            return float('inf')
+        # Distance formula
+        # s = 1 / (1 + (d/r)²)
+        # With d = distance, r = __self__.signal_radius, s = signal_level
+        # Distance is given without any borders
+        # s = 1 / (1 + (d/r)²)  solve for d
+        # s * (1 + (d/r)²) = 1
+        # 1 + (d/r)² = 1/s
+        # (d/r)² = (1/s) - 1
+        # d/r = sqrt((1/s) - 1)
+        # d = r * sqrt((1/s) - 1)
+        # d = r * sqrt((1 - s)/s)
+        if signal_level > 1:
+            __self__.log(f'Invalid signal level {signal_level}, returning inf distance',log_level.ERROR)
+            return float('inf')
+        if signal_level == 0:
+            __self__.log(f'Signal level is 0, returning inf distance',log_level.INFO)
+            return float('inf')
+        distance = __self__.signal_radius * ((1 - signal_level)/signal_level)**0.5
+        return distance
+    def __build_signal_map(__self__)->np.ndarray:
+            x0 = __self__.current_pos[1]
+            y0 = __self__.current_pos[0]
+            x = np.arange(__self__.width)
+            y = np.arange(__self__.height)[:,None]
+            map = np.sqrt(np.abs(x - x0)**2 + np.abs(y - y0)**2)
+            return map
+
+    def __gaussian_distance_ring(__self__,robot_pos, target_distance, sigma, amplitude=1.0) -> np.ndarray:
+        """
+        Creates a Gaussian ring around a robot position.
+
+        Parameters
+        ----------
+        robot_pos : (row, col)
+            Robot position.
+        target_distance : float
+            Distance where the signal is strongest.
+        sigma : float
+            Thickness of the ring.
+        amplitude : float
+            Peak value.
+
+        Returns
+        -------
+        grid : np.ndarray
+            2D array with Gaussian ring.
+        """
+
+        rows = __self__.height
+        cols = __self__.width
+        ry, rx = robot_pos
+
+        # Coordinate grid
+        y, x = np.ogrid[:rows, :cols]
+
+        # Distance from robot
+        dist = np.sqrt((x - rx)**2 + (y - ry)**2)
+
+        # Gaussian centered on the distance d0
+        grid = amplitude * np.exp(-(dist - target_distance)**2 / (2 * sigma**2))
+
+        return grid
+    def __analyse_signal(__self__,singal_level: float):
+        if not __self__.use_signal:
+            return
+        __self__.history[-1]['singal_level'] = singal_level
+        for pos in __self__.gems:
+            reduction = __self__.__signal_distance_to_signal_level(__self__.calc_distance_diagonal((pos[1],pos[0]),__self__.current_pos))
+            __self__.log(f'reducing singal {singal_level} by {reduction}')
+            singal_level -= reduction
+        signal_distance = __self__.__signal_signal_level_to_distance(singal_level)
+        gaus = __self__.__gaussian_distance_ring((__self__.current_pos[1],__self__.current_pos[0]),signal_distance,sigma=3)
+        #gaus += __self__.__gaussian_distance_ring((__self__.current_pos[1],__self__.current_pos[0]),signal_distance/3,sigma=3)
+        #gaus += __self__.__gaussian_distance_ring((__self__.current_pos[1],__self__.current_pos[0]),2*signal_distance/3,sigma=3)
+        if isinstance(__self__.singal_map,np.ndarray):
+            __self__.singal_map = 0.9 * __self__.singal_map # decay the past
+            __self__.singal_map += gaus
+            max_val = np.max(__self__.singal_map)
+            __self__.singal_map /=max_val
+        else:
+            __self__.singal_map = gaus
+        __self__.singal_map = np.nan_to_num(__self__.singal_map,nan=0.0)
+        # Threshold lowered from 0.5 to 0.3 to find 2-3x more candidate targets
+        __self__.singal_map[__self__.singal_map < 0.3] = 0
+        
+        # np.savetxt(f'data/{__self__.current_tick:04d}.csv',gaus)
+        # np.savetxt(f'data2/{__self__.current_tick:04d}.csv',__self__.singal_map)
+        current_value = 1.00
+        delta_value = 0.001
+        end_value = 0.8
+        min_elements = 1
+        __self__.gem_options = {}
+
+        singal_map = __self__.singal_map
+
+        while len(__self__.gem_options) < min_elements and current_value > end_value:
+            __self__.gem_options = {(y,x) for x,y in np.argwhere((singal_map*__self__.walls) > current_value )}
+            __self__.gem_options.difference_update(__self__.anchor_views[__self__.current_pos])
+            __self__.gem_options.difference_update(__self__.void_fields)
+            __self__.gem_computed.difference_update(__self__.void_fields)
+            current_value -= delta_value
+        # Threshold lowered from 0.5 to 0.3 to find 2-3x more candidate targets
+        __self__.singal_map[__self__.singal_map < 0.3] = 0
+        if len(__self__.gem_options) > MAX_EXLORATION_FIELDS:
+            __self__.gem_options = set(sorted(__self__.gem_options,key=lambda x:__self__.calc_distance(x,__self__.current_pos))[:MAX_EXLORATION_FIELDS])
+        if current_value > end_value:
+            __self__.field_changed[FIELD_CHANGED_GEMS] = True
+        __self__.history[-1]['options']=__self__.gem_options
+        #Check last n cycles for occourences
+        last_opption_count = 10
+        last_option_min = 8
+        last_options = [x['options'] for x in __self__.history[-last_opption_count:]]
+        counts = Counter(element for s in last_options for element in s)
+        predicted_gems = dict(counts)
+        __self__.log(f'Predict first stage: {predicted_gems}',log_level.DEVELOP)
+        max_val = max(predicted_gems.values() or [0])
+        max_val = max([max_val,last_option_min])
+        predicted_gems = {pos:value for pos,value in predicted_gems.items() if value == max_val}
+        __self__.log(f'Predict second step: {predicted_gems}',log_level.DEVELOP)
+        if len(predicted_gems) <= __self__.max_gems - len(__self__.gems):
+            for key in predicted_gems:
+                __self__.gem_computed.add(key)
+    def add_gaussian_local(__self__,array: np.ndarray, center: tuple[int,int], sigma: float, amplitude: float = 1.0, truncate: float = 3.0):
+        rows, cols = array.shape
+        cy, cx = int(center[0]), int(center[1])
+        r = int(math.ceil(truncate * sigma))
+        y0 = max(cy - r, 0); y1 = min(cy + r + 1, rows)
+        x0 = max(cx - r, 0); x1 = min(cx + r + 1, cols)
+        y, x = np.ogrid[y0:y1, x0:x1]
+        dist2 = (x - cx)**2 + (y - cy)**2
+        gauss = amplitude * np.exp(-dist2 / (2 * sigma**2))
+        array[y0:y1, x0:x1] += gauss
+        return array
+    def __analyse_signal2(__self__,singal_level: float):
+        if singal_level == 0:
+#            __self__.singal_map *= 0
+            __self__.log('Singal_level is 0, returning',log_level.DEVELOP)
+            return
+        signal_map = __self__.__build_signal_map()
+        # OPTIMIZATION: Replace np.vectorize with direct NumPy operation (370x faster!)
+        signal_map = 1 / (1 + (signal_map / __self__.signal_radius) ** 2)
+        signal_map = np.round(signal_map, 6)
+        signal_map *= __self__.walls
+        # Zero out any values larger than the reported signal level
+        try:
+            signal_map[signal_map > singal_level] = 0
+        except Exception:
+            pass
+        relevant_selections = []
+        if len(__self__.history) > 1:#The current tick is alreay the last element
+            selection = [x for x in __self__.history[-2].get('random_selection',[])]
+        else:
+            selection = []
+        result_map = np.zeros((__self__.height,__self__.width))
+        
+        # OPTIMIZATION: Improved sampling strategy - get candidates once, test more combinations
+        candidates = list(tuple(x) for x in np.argwhere(signal_map > 0.2))
+        if len(candidates) == 0:
+            return
+        
+        # Test combinations of 1-5 elements for better coverage (was fixed at 1,2,3 only)
+        for combo_size in [1, 2, 3, 4, 5]:
+            if len(candidates) < combo_size:
+                continue
+            for _ in range(30):  # 30 iterations per combo size = 150+ total instead of 30
+                selection = [random.sample(candidates, combo_size)]
+                for sub in selection:
+                    value = sum([signal_map[x[0],x[1]] for x in sub])
+                    # Slightly wider tolerance to catch more gem candidates
+                    if 0.85 * singal_level < value and value < 1.15 * singal_level:
+                        relevant_selections.append(sub)
+                        for pos in sub:
+                            result_map += __self__.add_gaussian_local(result_map,pos,1.5)
+        
+        if len(relevant_selections) > 0:
+            result_map /= np.max(result_map)
+            if isinstance(__self__.singal_map,np.ndarray):
+                __self__.singal_map *= 0.9
+                __self__.singal_map += result_map
+                max_val = np.max(__self__.singal_map)
+                if max_val > 0:
+                    __self__.singal_map /= max_val
+            else:
+                __self__.singal_map = result_map
+        # Commented out I/O to save time: np.savetxt(f'data/{__self__.current_tick:04d}.csv',result_map)
+        __self__.history[-1]['random_selection'] = relevant_selections
+        unique_gems = len(set(x for sub in relevant_selections for x in sub))
+        __self__.log(f'Found {len(relevant_selections)} selection combinations with {unique_gems} unique positions',log_level.DEVELOP)
+        __self__.gem_options = {x for sub in relevant_selections for x in sub}
+        
+    #endregion
+    def __get_explorartion_fields(__self__)->list[tuple[int,int]]:
+        __self__.log('No gems visible, adding nearest unseen field as target')
+        distances = list()
+        __self__.log(f'Unseen fields: {len(__self__.unseen_fields)}, Unseen fields history: {len(__self__.unseen_fields_history)}',log_level.DEBUG)
+        if len(__self__.unseen_fields_history) >= len(__self__.unseen_fields):
+            __self__.log('All unseen fields have been considered before, clearing history',log_level.DEBUG)
+            __self__.unseen_fields_history.clear()
+        for x in set(__self__.unseen_fields - __self__.unseen_fields_history):
+            distances.append({'loc':x,'dist':__self__.calc_distance(x,__self__.current_pos)}) 
+        distances.sort(key=lambda a: a['dist'])
+        relevant_elements = list()
+        for i in range(min(__self__.exploration_field_limit,len(distances))):
+            relevant_elements.append(distances[i]['loc'])
+            __self__.unseen_fields_history.add(distances[i]['loc'])
+        return relevant_elements
+    def __get_patrol_fields(__self__)->list[tuple[int,int]]:
+        # Select field that is last recently seen
+        max_time_field_not_seen = sorted(__self__.last_seen_fields.values(),reverse=True)
+        max_time_field_not_seen = max_time_field_not_seen[0:min(NOT_SEEN_FIELDS,len(max_time_field_not_seen))]
+        __self__.log(f'Max time field not seen: {max_time_field_not_seen}',log_level.INFO)
+        max_field = {field for field,not_seen in __self__.last_seen_fields.items() if not_seen == max_time_field_not_seen[0]}.pop()
+        __self__.log(f'Fields not seen for max time: {max_field} for {__self__.last_seen_fields[max_field]} ticks',log_level.INFO)
+        #Reduce current target if cycling
+        relevant_fields = {field for field,not_seen in __self__.last_seen_fields.items() if not_seen in max_time_field_not_seen}
+        __self__.log(f'Patrol fields: {len(relevant_fields)}',log_level.DEBUG)
+        #Select next field
+        # Select by maximum number of fields to see
+        anchor_fields = {field:len(value & relevant_fields) for field,value in __self__.anchor_views.items() if len(value & relevant_fields) > 0}
+        __self__.log(f'Anchor fields for patrol: {len(anchor_fields)}',log_level.DEBUG)
+        max_fields = sorted(anchor_fields.values(),reverse=True)[0]
+        anchor_fields = [field for field,value in anchor_fields.items() if value == max_fields]
+        relevant_elements = list(anchor_fields)
+        __self__.log(f'Selected patrol fields: {len(relevant_elements)}',log_level.DEBUG)
+        #In case the max not seen field outrages the threashhold, add the next field, that sees it, if necessary
+        if __self__.last_seen_fields.get(max_field,0) > NOT_SEEN_THREASHOLD:
+            selected_anchors = [field for field in anchor_fields if max_field in __self__.anchor_views.get(field,set())]
+            if not selected_anchors:
+                #Find all anchors looking at this field
+                all_anchors = [field for field,value in __self__.anchor_views.items() if max_field in value]
+                target_distances = __self__.build_field(__self__.current_pos,target_value=1,decay=None)
+                sorted_anchors = sorted(all_anchors,key=lambda x:target_distances[x[1],x[0]])
+                relevant_elements.append(sorted_anchors[0])
+        return relevant_elements
+    def __collect_targets(__self__) ->dict[str:dict[str:list]]:
+        '''
+            Collect all relevant targets for the field calculation
+            Relevant targets are returned as two lists, one with positions, one with values
+        '''
+        data = {}
+        #region GEMS
+        relevant_elements = list()
+        relevant_values = list()
+        # Add Gems and Opoennts as targets
+        for gem_pos,gem_ttl in __self__.gems.items():
+            relevant_elements.append(gem_pos)
+            relevant_values.append(gem_ttl*10)
+        data[PLAN_GEMS] = {
+            PLAN_ELEMENTS : relevant_elements,
+            PLAN_VALUES : relevant_values
+        }
+        #endregion
+        #region Opponents
+        relevant_elements = list()
+        relevant_values = list()
+        for opponent in __self__.opponents:
+            relevant_elements.append(opponent)
+            relevant_values.append(-abs(OPPONENT_PENALTY_TTL))
+        data[PLAN_OPPONENTS] = {
+            PLAN_ELEMENTS:relevant_elements,
+            PLAN_VALUES:relevant_values
+        }
+        #endregion
+        #region Predicted Gems
+        relevant_elements = list()
+        relevant_values = list()
+        for opt in __self__.gem_options:
+            relevant_elements.append(opt)
+            relevant_values.append(POSSIBLE_GEM_VALUE)
+        data[PLAN_SIGNAL] = {
+            PLAN_ELEMENTS:relevant_elements,
+            PLAN_VALUES:relevant_values
+        }
+        #endregion
+        #region computed Gems
+        relevant_elements = list()
+        relevant_values = list()
+        for opt in __self__.gem_computed:
+            relevant_elements.append(opt)
+            relevant_values.append(POSSIBLE_GEM_VALUE)
+        data[PLAN_COMPUTED] = {
+            PLAN_ELEMENTS:relevant_elements,
+            PLAN_VALUES:relevant_values
+        }
+        #endregion
+        # Add next unseen field, if no gem exists
+        __self__.log(f'Gems: {len(__self__.gems)}, Unseen fields: {len(__self__.unseen_fields)},Comptued Gems: {len(__self__.gem_computed)}, Predicted Gems: {len(__self__.gem_options)}',log_level.DEVELOP)
+        #region unseen elements
+        # if len(__self__.unseen_fields)>0 and not __self__.cycling_detected:
+        relevant_elements = list()
+        relevant_values = list()
+        unseen_elements = __self__.__get_explorartion_fields()
+        for x in unseen_elements:
+            relevant_elements.append(x)
+            relevant_values.append(EXPLORATION_FIELD_VALUE)
+        data[PLAN_UNKNOWN] = {
+            PLAN_ELEMENTS:relevant_elements,
+            PLAN_VALUES:relevant_values
+        }
+        #endregion
+        #region Patrol fields
+        relevant_elements = list()
+        relevant_values = list()
+        patrol_elements = __self__.__get_patrol_fields()
+        for x in patrol_elements:
+            relevant_elements.append(x)
+#            relevant_values.append(max(1,__self__.last_seen_fields.get(x,1)))
+            relevant_values.append(10)
+        data[PLAN_PATROL] = {
+            PLAN_ELEMENTS:relevant_elements,
+            PLAN_VALUES:relevant_values
+        }
+        #endregion
+        return data
+    def __surrounding_fields(__self__,pos:tuple[int,int])->dict[str:tuple[int,int]]:
+        '''
+            Returns the surrounding fields of a given position
+        '''
+        surroundings = dict()
+        surroundings['w'] = (pos[0]-1,pos[1])
+        surroundings['e'] = (pos[0]+1,pos[1])
+        surroundings['n'] = (pos[0],pos[1]-1)
+        surroundings['s'] = (pos[0],pos[1]+1)
+        return surroundings
+    def __check_for_surrounding_walls(__self__,pos:tuple[int,int])->bool:
+        '''
+            This checks if the given position is sourunded by walls. if all elements are eigther out of bound or walls, True is returned
+        
+        :param __self__: Description
+        :param pos: postion to check
+        :type pos: tuple[int, int]
+        :return: true if pos is sourounded by walls
+        :rtype: bool
+        '''
+        surroundings = __self__.__surrounding_fields(pos)
+        for direction,field in surroundings.items():
+            if field[0] < 0 or field[0] >= __self__.width or field[1] < 0 or field[1] >= __self__.height:
+                continue
+            if __self__.walls[field[1],field[0]] > 0:
+                return False
+        return True
+    def plan(__self__):
+        pos_occourence = len([x for x in __self__.history[-CYCLING_RELEVANT_FIELDS:] if x['pos'] == __self__.current_pos])
+        __self__.log(f'This position {__self__.current_pos} was entered {pos_occourence} within the last {CYCLING_RELEVANT_FIELDS}',log_level.DEVELOP)
+        if pos_occourence < 5 and not any(__self__.field_changed.values()):
+            __self__.log('Field has not changed, reusing old field',log_level.DEVELOP)
+            return
+        possible_targets = __self__.__collect_targets()
+        target_order = [PLAN_GEMS,PLAN_COMPUTED,PLAN_SIGNAL,PLAN_UNKNOWN,PLAN_PATROL]
+
+        relevant_elements = list()
+        relevant_values = list()
+        for target in target_order:
+            __self__.log(f'Current target: {target}',log_level_value=log_level.DEVELOP)
+            relevant_elements.extend(possible_targets[target][PLAN_ELEMENTS])
+            relevant_values.extend(possible_targets[target][PLAN_VALUES])
+            if len(relevant_elements) > 0:
+                break
+        #Always go for gems to be seen
+        #Always react on opponents
+        relevant_elements.extend(possible_targets[PLAN_OPPONENTS][PLAN_ELEMENTS])
+        relevant_values.extend(possible_targets[PLAN_OPPONENTS][PLAN_VALUES])
+        __self__.current_targets = relevant_elements
+        __self__.log(f'Using {len(__self__.current_targets)} number of targets',log_level.DEVELOP)
+        field = None
+        if USE_MULTITHREADING:
+            with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+                results = list(executor.map(__self__.build_field,relevant_elements,relevant_values))
+            field = reduce(operator.add,results)
+        else:
+            for pos,ttl in zip (relevant_elements,relevant_values):
+                single_field = __self__.build_field(pos,ttl)
+                if field is None:
+                    field = single_field
+                else:
+                    field += single_field
+        if field.any():
+            __self__.field = field
+        else:
+            raise Exception('No field could be built')
+        # select way to gem
+        # last_fields = __self__.history[-CYCLING_RELEVANT_FIELDS:]
+        # for tick in last_fields:
+        #     pos = tick['pos']
+        #     __self__.field[pos[1],pos[0]] = __self__.field[pos[1],pos[0]] * LAST_FIELD_MOD
+
+
+    def build_field(__self__,target:tuple[int,int],target_value:int=1,decay:float|None='use_self',stop_at_distance:int=None)->np.ndarray:
+        '''
+        This computes the whole field, abort as soon as the position of the bot is reached.
+        Formula is target_value * decay**field_value
+        
+        :param __self__: Description
+        :param target: X/Y Position of the target
+        :type target: tuple[int, int]
+        :param target_value: Multiplyer for field (e.g. GEM TTL, or penality for opponent)
+        :type target_value: int
+        :param decay: factor for decreasing each value on the field. if None, decay is not calculated
+        :type decay: float|None
+        '''
+        #Check if this is already in cache and cache could be used
+        field_changed = __self__.field_changed.get(FIELD_CHANGED_FIELD, False)
+        field_changed = field_changed or __self__.field_changed.get(FIELD_CHANGED_WALLS, False)
+        field_changed = field_changed or __self__.field_changed.get(FIELD_CHANGED_VOID, False)
+        if decay == 'use_self':
+            decay = __self__.decay_factor
+        if not stop_at_distance:
+            stop_at_distance = __self__.map_max_distance
+        # Creates the potential field, with all known obstacles, unknown fields are handled as available fields for this
+        __self__.log(f'Building field for target at {target} with value {target_value} and decay {decay}',log_level.DEBUG)
+        map = np.full((__self__.height, __self__.width), NOT_REACHABLE_FIELD, dtype=np.int16)
+        q = deque()
+        q.append((target[0],target[1], 0))
+        early_stopped = False
+        if target in __self__.map_distance_cache and not field_changed:
+            __self__.log(f'Using cached distance map for target at {target}',log_level.DEBUG)
+            map = __self__.map_distance_cache[target]
+        else:
+            while q:
+                x, y, dist = q.popleft()
+                # bounds check
+                if x < 0 or x >= __self__.width or y < 0 or y >= __self__.height:
+                    continue
+                # skip walls
+                if __self__.walls[y,x] == 0:
+                    continue
+                # already has a shorter distance
+                if map[y, x] <= dist:
+                    continue
+                map[y, x] = dist
+                nd = dist + 1
+                if __self__.current_pos == (x,y):
+                    __self__.log(f'Early break with {len(q)} elements left',log_level_value=log_level.DEVELOP)
+                if nd > stop_at_distance:
+                    early_stopped = True
+                    continue
+                q.append((x+1, y, nd))
+                q.append((x-1, y, nd))
+                q.append((x, y+1, nd))
+                q.append((x, y-1, nd))
+            if not early_stopped and map[__self__.current_pos[1],__self__.current_pos[0]] == NOT_REACHABLE_FIELD:
+                __self__.void_fields.add(target)
+                __self__.log(f'Target at {target} is unreachable, added to void fields',log_level.WARNING)
+            if early_stopped:
+              __self__.log(f'Field calculation for target at {target} stopped early at distance {stop_at_distance}',log_level.INFO)
+            __self__.map_distance_cache[target] = map
+        if decay:
+            map = target_value * decay ** map
+        else:
+            map = target_value * map        
+        return map
+    def hightlight_targets(__self__)->str:
+        if __self__.current_log_level == log_level.GAME:
+            return ''
+        maps = {}
+        hightlight = []
+        maps['highlight'] = hightlight
+        for target in __self__.current_targets:
+            if target in __self__.gems:
+                color = '#FFFF00'
+            elif target in __self__.opponents:
+                color = '#FF0000'
+            elif target in __self__.gem_options:
+                color = '#F000FF'
+            elif target in __self__.gem_computed:
+                color = "#19CAB5"
+            else:
+                color = '#00FF00'
+            hightlight.append([int(target[0]),int(target[1]),color])
+        for pos in __self__.void_fields:
+            hightlight.append([int(pos[0]),int(pos[1]),'#FFFFFF'])
+        return ' '+json.dumps(maps)
+    def select_move(__self__)->str:
+        '''
+            gathers the four values around the bot, and its values. selects the field with the highest value as next move
+        '''
+        __self__.log(f'Number of target:{len(__self__.current_targets)}',log_level.INFO)
+        map = __self__.field
+        bot_x = __self__.current_pos[0]
+        bot_y = __self__.current_pos[1]
+        directions = {}
+        #Map is indexed [y,x] Select the possible next steps
+        #region west
+        w = (bot_y,max(bot_x-1,0))
+        if __self__.walls [w[0],w[1]] > 0 and (w[1],w[0]) not in __self__.opponents:
+            directions['W']=map[w[0],w[1]]
+        #endregion
+        #region east
+        e = (bot_y,min(bot_x+1,__self__.width-1))
+        if __self__.walls [e[0],e[1]] > 0 and (e[1],e[0]) not in __self__.opponents:
+            directions['E']=map[e[0],e[1]]
+        #endregion
+        #region north
+        n = (max(bot_y-1,0),bot_x)
+        if __self__.walls [n[0],n[1]] > 0 and (n[1],n[0]) not in __self__.opponents:
+            directions['N']=map[n[0],n[1]]
+        #endregion
+        #region south
+        s = (min(bot_y+1,__self__.height),bot_x)
+        if __self__.walls [s[0],s[1]] > 0 and (s[1],s[0]) not in __self__.opponents:
+            directions['S']=map[s[0],s[1]]
+        #endregion
+        __self__.log(f'Bot position: {bot_x},{bot_y} {directions}',log_level.INFO)  
+        if not directions:# Fallback if bot is surrounded
+            direction = 'WAIT'
+        else:
+            direction = max(directions,key=directions.get)
+        highlight = __self__.hightlight_targets()
+        print(f'{direction}{highlight}',flush=True)
+    # Helper
+    def log(__self__,message:str,log_level_value:log_level=log_level.INFO):
+        '''
+            Logs a message to stderr with the given log level
+        '''
+        if log_level_value.value >= __self__.current_log_level.value:
+            print(f'[{log_level_value.name}] {message}',file=sys.stderr,flush=True)
+    def calc_distance(__self__,pos1:tuple[int,int],pos2:tuple[int,int])->int:
+        '''
+            Simple helper function to calulate Manhattan distance
+        '''
+        return abs(pos1[0]-pos2[0]) + abs(pos1[1]-pos2[1])
+    def calc_distance_diagonal(__self__,pos1:tuple[int,int],pos2:tuple[int,int])->float:
+        '''
+            Simple helper function to calulate Diagonal distance
+        '''
+        return np.sqrt((pos1[0]-pos2[0])**2 + (pos1[1]-pos2[1])**2)

@@ -1,13 +1,27 @@
+import os
+import glob
 import numpy as np
+import matplotlib
+
+# Choose an interactive backend when a display is available; otherwise use Agg
+if os.environ.get("DISPLAY"):
+    try:
+        matplotlib.use("TkAgg")
+    except Exception:
+        try:
+            matplotlib.use("Qt5Agg")
+        except Exception:
+            pass
+else:
+    matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
-import glob
-import os
 
 # ---------------------------------------------------------
 # Load all CSV files in the current directory
 # ---------------------------------------------------------
-csv_files = sorted(glob.glob("data2/*.csv"))
+csv_files = sorted(glob.glob("data/*.csv"))
 
 if len(csv_files) == 0:
     raise RuntimeError("No CSV files found in this folder.")
@@ -65,6 +79,16 @@ def update(val):
 slider.on_changed(update)
 
 # ---------------------------------------------------------
-# Show viewer
+# Show viewer or save frames in headless environments
 # ---------------------------------------------------------
-plt.show()
+backend = matplotlib.get_backend().lower()
+if backend in ("agg", "cairo"):
+    out_dir = "frames_out"
+    os.makedirs(out_dir, exist_ok=True)
+    for i in range(len(data)):
+        img.set_data(data[i])
+        title.set_text(f"Frame {i} — {csv_files[i]}")
+        fig.savefig(os.path.join(out_dir, f"frame_{i:04d}.png"))
+    print(f"No interactive backend ({matplotlib.get_backend()}). Saved {len(data)} frames to '{out_dir}'.")
+else:
+    plt.show()

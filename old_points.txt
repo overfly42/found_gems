@@ -173,3 +173,13 @@ Stage 2
     - last_field_mod 0.5 cycles auf 50
     - last_field_mod 0.75 cycle 50 Begrenzung Options -> 8553
     ruby runner.rb --seed 18uvm8youc --profile ../found_gems   100748
+2025-01-25
+    ruby runner.rb --seed 24b62blwiq ../found_gems 3447
+    Add Gaus 1/3 und 2/3 -> 4318
+    ruby runner.rb --seed 17fmcxy588 ../found_gems  4047
+    Add Gaus 1/3 und 2/3 -> 3736
+
+New implementation Dijstra
+2025-02-01
+    ruby runner.rb --seed 17fmcxy588 ../found_gems 5939
+    ruby runner.rb --seed 24b62blwiq ../found_gems 4292
