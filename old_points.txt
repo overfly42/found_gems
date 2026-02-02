@@ -183,3 +183,6 @@ New implementation Dijstra
 2025-02-01
     ruby runner.rb --seed 17fmcxy588 ../found_gems 5939
     ruby runner.rb --seed 24b62blwiq ../found_gems 4292 -> 4361
+2025-02-02
+    ruby runner.rb --seed 1ghz4npd9g ../found_gems  timeout 6059
+    ruby runner.rb --seed 113chwcufi ../found_gems  timeout

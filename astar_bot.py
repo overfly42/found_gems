@@ -19,6 +19,7 @@ DIRS = {
 DIRS_INV = defaultdict(lambda : str('WAIT'))
 for k,v in DIRS.items():
     DIRS_INV[v] = k
+MAX_PATROL_TARGET = 10
 PLAN_GEMS = 'known_gems'
 PLAN_COMPUTED = 'computed_gems'
 PLAN_SIGNAL = 'potential_gems'
@@ -207,6 +208,10 @@ class Planer:
         log(f'Patrol Relevant Targets: {relevant_fields}')
         possible_targets = {k for k,v in __self__.world.visible_fields.items() if len(relevant_fields.intersection(v)) > 0}
         log(f'Patrol Possible Targets: {possible_targets}')
+        possible_targets = sorted(possible_targets,key= lambda x:euclidian_distance(__self__.world.bot_pos,x))
+        if len(possible_targets) > MAX_PATROL_TARGET:
+            log(f'Reducing possible targets to {MAX_PATROL_TARGET}')
+            possible_targets = possible_targets[:MAX_PATROL_TARGET]
         target_values =  {k:__self__.path_planing(__self__.world.bot_pos,k)[1] for k in possible_targets}
         __self__.targets[PLAN_PATROL] = list(k for k,v in sorted(target_values.items(),key=lambda item:item[1]))
         log(f'Patrol Fields: {__self__.targets[PLAN_PATROL]}')
