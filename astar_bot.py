@@ -1,6 +1,7 @@
 import json
 import sys
 import random
+import os
 import numpy as np
 
 from enum import Enum
@@ -19,6 +20,15 @@ DIRS = {
 DIRS_INV = defaultdict(lambda : str('WAIT'))
 for k,v in DIRS.items():
     DIRS_INV[v] = k
+#region singal handling
+#GAUS_RING_INTERVALS = [3.0, 2.5, 2.0, 1.5, 1.0]#, 0.75, 0.66, 0.5, 0.33, 0.25]
+GAUS_RING_INTERVALS = [1.0, 0.75, 0.66, 0.5, 0.33, 0.25]
+# GAUS_RING_INTERVALS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+SIGMA = 2.0
+SIGNAL_MAP_DECAY = 0.99
+SIGNAL_THRESHHOLD = 0.7
+COPUTE_THREASHOLD = 0.9
+#endregion
 MAX_PATROL_TARGET = 10
 PLAN_GEMS = 'known_gems'
 PLAN_COMPUTED = 'computed_gems'
@@ -50,6 +60,8 @@ def log(message:str,log_level_value:log_level=log_level.INFO):
         print(f'[{log_level_value.name}] {message}',file=sys.stderr,flush=True)
 def euclidian_distance(pos_a:tuple[int,int],pos_b:tuple[int,int])->float:
     return np.sqrt((pos_a[0]-pos_b[0])**2+(pos_a[1]-pos_b[1])**2)
+
+
 #endregion
 
 
@@ -102,14 +114,19 @@ class World:
         if value_before != value_after:
             __self__.world_changed = True
         log(f'There are currently {len(__self__.gems_seen)} in the list')
+
 class Planer:
     def __init__(__self__,world:World):
         __self__.world = world
         __self__.targets_changd = True
+        __self__.signal_radius = 0.0
         __self__.targets = {}
+        __self__.computed_not_in_counter = 0
+        __self__.gems_computed = set()
         __self__.current_path:list[tuple[int,int]] = []
+        __self__.signal_map = np.zeros_like(__self__.world.field)
         __self__.planing_actions = {
-            PLAN_COMPUTED:__self__.not_implemented_yet,
+            PLAN_COMPUTED:__self__.compute_selection,
             PLAN_GEMS:__self__.gem_selection,
             PLAN_OPPONENTS:__self__.not_implemented_yet,
             PLAN_PATROL:__self__.patrol_selection,
@@ -215,6 +232,11 @@ class Planer:
         target_values =  {k:__self__.path_planing(__self__.world.bot_pos,k)[1] for k in possible_targets}
         __self__.targets[PLAN_PATROL] = list(k for k,v in sorted(target_values.items(),key=lambda item:item[1]))
         log(f'Patrol Fields: {__self__.targets[PLAN_PATROL]}')
+    def compute_selection(__self__):
+        relevant_targets = __self__.gems_computed - set(__self__.world.visible_fields[__self__.world.bot_pos])
+        relevant_targets.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
+        __self__.targets[PLAN_COMPUTED] = list(sorted(relevant_targets,key= lambda x: euclidian_distance(__self__.world.bot_pos,x)))
+
     def plan_global(__self__):
         if __self__.current_path and not (__self__.world.world_changed and __self__.targets_changd):
             log('Use existing path')
@@ -222,8 +244,8 @@ class Planer:
         log('Calculating new Path')
         plan_order = [
             PLAN_GEMS,
-            PLAN_UNKNOWN,
             PLAN_COMPUTED,
+            PLAN_UNKNOWN,
             PLAN_SIGNAL,
             PLAN_PATROL,
         ]
@@ -235,8 +257,97 @@ class Planer:
             if plan in __self__.targets and len(__self__.targets[plan]) > 0:
                 __self__.current_path,_ = __self__.path_planing(__self__.world.bot_pos,__self__.targets[plan][0])
                 __self__.current_path = __self__.current_path[1:]
-                break
+                if len(__self__.current_path) > 0:
+                    break
+    def analyse_signal(__self__,singal_strength):
+        if singal_strength <= 0:
+            log('Discarding Singal analysis.')
+            return
+        log('Starting Singal analysis.')
+        base_distance = __self__.signal_level_to_distance(singal_strength) 
+        distances = [(1.0/x) * base_distance for x in GAUS_RING_INTERVALS]
+        signal_map = np.zeros_like(__self__.world.field,np.float64)
+        for d in distances:
+            signal_map += __self__.gaussian_distance_ring(__self__.world.bot_pos,d,sigma=SIGMA)
+        signal_map /= np.max(signal_map)
+        __self__.signal_map = SIGNAL_MAP_DECAY * __self__.signal_map + signal_map
+#        __self__.signal_map /= __self__.world.field
+        __self__.signal_map/=np.max(__self__.signal_map)
+        __self__.signal_map[__self__.signal_map < SIGNAL_THRESHHOLD] = 0
+        log(f'Max value on singal map: {np.max(__self__.signal_map)}')
+        folder = 'data'
+        if os.path.exists(folder) and LOG_LEVEL.value < log_level.GAME.value:
+            np.savetxt(f'{folder}/{len(os.listdir(folder)):04d}.csv',__self__.signal_map)
+        else:
+            log(f'Files in {folder}: {len(os.listdir(folder))}')
+        __self__.gems_computed = {(x,y) for  x,y in np.argwhere(__self__.signal_map>COPUTE_THREASHOLD)}
+        __self__.gems_computed.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
+        if len(__self__.current_path)>1 and len(__self__.world.gems_seen) == 0:
+            current_target = __self__.current_path[-1]
+            if current_target not in __self__.gems_computed:
+                __self__.computed_not_in_counter += 1
+                if __self__.computed_not_in_counter > 4:
+                    __self__.current_path.clear()
+                    __self__.computed_not_in_counter = 0
+            else:
+                __self__.computed_not_in_counter = 0
+        if len(__self__.gems_computed) == 0:
+            __self__.signal_map = np.zeros_like(__self__.signal_map)
+    def signal_level_to_distance(__self__,signal_level:float)->float:
+        # Distance formula
+        # s = 1 / (1 + (d/r)²)
+        # With d = distance, r = __self__.signal_radius, s = signal_level
+        # Distance is given without any borders
+        # s = 1 / (1 + (d/r)²)  solve for d
+        # s * (1 + (d/r)²) = 1
+        # 1 + (d/r)² = 1/s
+        # (d/r)² = (1/s) - 1
+        # d/r = sqrt((1/s) - 1)
+        # d = r * sqrt((1/s) - 1)
+        # d = r * sqrt((1 - s)/s)
+        if signal_level > 1:
+            log(f'Invalid signal level {signal_level}, returning inf distance',log_level.ERROR)
+            return float('inf')
+        if signal_level <= 0:
+            log(f'Signal level is 0, returning inf distance',log_level.INFO)
+            return float('inf')
+        distance = __self__.signal_radius * ((1 - signal_level)/signal_level)**0.5
+        return distance
+    def gaussian_distance_ring(__self__,robot_pos, target_distance, sigma, amplitude=1.0) -> np.ndarray:
+        """
+        Creates a Gaussian ring around a robot position.
 
+        Parameters
+        ----------
+        robot_pos : (row, col)
+            Robot position.
+        target_distance : float
+            Distance where the signal is strongest.
+        sigma : float
+            Thickness of the ring.
+        amplitude : float
+            Peak value.
+
+        Returns
+        -------
+        grid : np.ndarray
+            2D array with Gaussian ring.
+        """
+
+        rows = __self__.world.height
+        cols = __self__.world.width
+        ry, rx = robot_pos
+
+        # Coordinate grid
+        y, x = np.ogrid[:rows, :cols]
+
+        # Distance from robot
+        dist = np.sqrt((x - rx)**2 + (y - ry)**2)
+
+        # Gaussian centered on the distance d0
+        grid = amplitude * np.exp(-(dist - target_distance)**2 / (2 * sigma**2))
+
+        return grid
 class signal_bot:
     def __init__(__self__):
         __self__.world = World()
@@ -256,10 +367,12 @@ class signal_bot:
         __self__.world.update_walls(data.get("wall",[]))
         __self__.world.update_floor(data.get("floor",[]))
         __self__.world.update_gems(data.get('visible_gems',[]))
+        __self__.planer.analyse_signal(data.get('signal_level',0))
     def analyse_first_tick(__self__,data):
         log('First Tick',log_level.DEBUG)
         __self__.first_tick = False
         __self__.world.update_config(width=data['config']['width'],height = data['config']['height'])
+        __self__.planer.signal_radius  = data['config']["signal_radius"]
     def analyse_bot(__self__,data):
         pos = data['bot']
         __self__.world.bot_pos = (pos[1],pos[0])
@@ -272,7 +385,11 @@ class signal_bot:
             highlight.append([int(pos[1]),int(pos[0]),'#FFFFFF'])
         for pos in __self__.planer.current_path:
             highlight.append([int(pos[1]),int(pos[0]),'#F00000'])
-
+        for pos in __self__.planer.gems_computed:
+            highlight.append([int(pos[1]),int(pos[0]),'#00FF00'])
+        if PLAN_COMPUTED in __self__.planer.targets and __self__.planer.targets[PLAN_COMPUTED]:
+            y,x = __self__.planer.targets[PLAN_COMPUTED][0]
+            highlight.append([int(x),int(y),'#991199'])
         maps['highlight'] = highlight
         return ' ' + json.dumps(maps)
     def select_move(__self__):
@@ -287,6 +404,7 @@ class signal_bot:
             move = DIRS_INV[direction]
         else:
             move = random.choice(list(DIRS.keys()))
+            __self__.planer.current_path.clear()
         if move == 'WAIT':
             __self__.planer.current_path.clear()
         print(f'{move}{__self__.highlight_targets()}',flush=True)
