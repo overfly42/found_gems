@@ -26,8 +26,9 @@ GAUS_RING_INTERVALS = [1.0, 0.75, 0.66, 0.5, 0.33, 0.25]
 # GAUS_RING_INTERVALS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 SIGMA = 2.0
 SIGNAL_MAP_DECAY = 0.99
-SIGNAL_THRESHHOLD = 0.7
-COPUTE_THREASHOLD = 0.9
+SIGNAL_THRESHHOLD = 0.5
+COPUTE_THREASHOLD = 0.7
+NUM_SIGNAL_OCCOURENCES = 2
 #endregion
 MAX_PATROL_TARGET = 10
 PLAN_GEMS = 'known_gems'
@@ -122,7 +123,7 @@ class Planer:
         __self__.signal_radius = 0.0
         __self__.targets = {}
         __self__.computed_not_in_counter = 0
-        __self__.gems_computed = set()
+        __self__.singal_memory = []
         __self__.current_path:list[tuple[int,int]] = []
         __self__.signal_map = np.zeros_like(__self__.world.field)
         __self__.planing_actions = {
@@ -185,7 +186,8 @@ class Planer:
             target = current_path[target]
             actual_path.append(target)
         actual_path.reverse()
-        return actual_path, score[target]
+        final_score = max([v for k,v in score.items() if k in actual_path])
+        return actual_path, final_score
     def exploration(__self__):
         fields = {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.field.value)}
         if len(fields) == 0:
@@ -213,6 +215,7 @@ class Planer:
             distance_score.append(0)
             for j in range(len(combo)-1):
                 distance_score[i] += __self__.path_planing(combo[j],combo[j+1])[1]
+            log(f'Combo {combo} has length {distance_score[i]}')
         min_index = np.argmin(distance_score)
         __self__.targets[PLAN_GEMS] = combinations[min_index]
         log(f'Found {len(combinations)} gem combinations')
@@ -233,10 +236,19 @@ class Planer:
         __self__.targets[PLAN_PATROL] = list(k for k,v in sorted(target_values.items(),key=lambda item:item[1]))
         log(f'Patrol Fields: {__self__.targets[PLAN_PATROL]}')
     def compute_selection(__self__):
-        relevant_targets = __self__.gems_computed - set(__self__.world.visible_fields[__self__.world.bot_pos])
-        relevant_targets.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
+        #Get all elements occoured in the last n computations
+        #Remove all elements seen right now
+        #Order by euclidian distance (as it need to be orderd)
+        if len(__self__.singal_memory) < NUM_SIGNAL_OCCOURENCES:
+            log('Not enough memory data for singal planing.')
+            return
+        relevant_targets = __self__.singal_memory[-1]
+        for i in range(NUM_SIGNAL_OCCOURENCES-1):
+            relevant_targets = relevant_targets.intersection(__self__.singal_memory[-i])            
+        if PLAN_COMPUTED in __self__.targets:
+            relevant_targets.update(__self__.targets[PLAN_COMPUTED])
+        relevant_targets -= set(__self__.world.visible_fields[__self__.world.bot_pos])
         __self__.targets[PLAN_COMPUTED] = list(sorted(relevant_targets,key= lambda x: euclidian_distance(__self__.world.bot_pos,x)))
-
     def plan_global(__self__):
         if __self__.current_path and not (__self__.world.world_changed and __self__.targets_changd):
             log('Use existing path')
@@ -278,21 +290,19 @@ class Planer:
         folder = 'data'
         if os.path.exists(folder) and LOG_LEVEL.value < log_level.GAME.value:
             np.savetxt(f'{folder}/{len(os.listdir(folder)):04d}.csv',__self__.signal_map)
-        else:
+        elif os.path.exists(folder):
             log(f'Files in {folder}: {len(os.listdir(folder))}')
-        __self__.gems_computed = {(x,y) for  x,y in np.argwhere(__self__.signal_map>COPUTE_THREASHOLD)}
-        __self__.gems_computed.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
-        if len(__self__.current_path)>1 and len(__self__.world.gems_seen) == 0:
-            current_target = __self__.current_path[-1]
-            if current_target not in __self__.gems_computed:
-                __self__.computed_not_in_counter += 1
-                if __self__.computed_not_in_counter > 4:
-                    __self__.current_path.clear()
-                    __self__.computed_not_in_counter = 0
-            else:
-                __self__.computed_not_in_counter = 0
-        if len(__self__.gems_computed) == 0:
+        gems_computed = {(x,y) for  x,y in np.argwhere(__self__.signal_map>COPUTE_THREASHOLD)}
+        gems_computed.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
+        __self__.singal_memory.append(gems_computed)
+        if len(gems_computed) == 0:
             __self__.signal_map = np.zeros_like(__self__.signal_map)
+        #Clean up already computed gems
+        if PLAN_COMPUTED in __self__.targets:
+            l = set(__self__.targets[PLAN_COMPUTED])
+            l.difference_update(__self__.world.visible_fields[__self__.world.bot_pos])
+            l.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
+            __self__.targets[PLAN_COMPUTED] = list(sorted(l,key=lambda x: euclidian_distance(x,__self__.world.bot_pos)))
     def signal_level_to_distance(__self__,signal_level:float)->float:
         # Distance formula
         # s = 1 / (1 + (d/r)²)
@@ -385,9 +395,9 @@ class signal_bot:
             highlight.append([int(pos[1]),int(pos[0]),'#FFFFFF'])
         for pos in __self__.planer.current_path:
             highlight.append([int(pos[1]),int(pos[0]),'#F00000'])
-        for pos in __self__.planer.gems_computed:
-            highlight.append([int(pos[1]),int(pos[0]),'#00FF00'])
         if PLAN_COMPUTED in __self__.planer.targets and __self__.planer.targets[PLAN_COMPUTED]:
+            for pos in __self__.planer.targets[PLAN_COMPUTED]:
+                highlight.append([int(pos[1]),int(pos[0]),'#00FF00'])
             y,x = __self__.planer.targets[PLAN_COMPUTED][0]
             highlight.append([int(x),int(y),'#991199'])
         maps['highlight'] = highlight
