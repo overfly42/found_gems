@@ -248,6 +248,7 @@ class Planer:
         if PLAN_COMPUTED in __self__.targets:
             relevant_targets.update(__self__.targets[PLAN_COMPUTED])
         relevant_targets -= set(__self__.world.visible_fields[__self__.world.bot_pos])
+        relevant_targets -= {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)}
         __self__.targets[PLAN_COMPUTED] = list(sorted(relevant_targets,key= lambda x: euclidian_distance(__self__.world.bot_pos,x)))
     def plan_global(__self__):
         if __self__.current_path and not (__self__.world.world_changed and __self__.targets_changd):
