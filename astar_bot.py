@@ -25,9 +25,9 @@ for k,v in DIRS.items():
 GAUS_RING_INTERVALS = [1.0, 0.75, 0.66, 0.5, 0.33, 0.25]
 # GAUS_RING_INTERVALS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 SIGMA = 2.0
-SIGNAL_MAP_DECAY = 0.99
+SIGNAL_MAP_DECAY = 0.9
 SIGNAL_THRESHHOLD = 0.5
-COPUTE_THREASHOLD = 0.7
+COPUTE_THREASHOLD = 0.75
 NUM_SIGNAL_OCCOURENCES = 2
 #endregion
 MAX_PATROL_TARGET = 10
@@ -123,6 +123,7 @@ class Planer:
         __self__.signal_radius = 0.0
         __self__.targets = {}
         __self__.computed_not_in_counter = 0
+        __self__.gems_computed:set[tuple[int,int]] = set()
         __self__.singal_memory = []
         __self__.current_path:list[tuple[int,int]] = []
         __self__.signal_map = np.zeros_like(__self__.world.field)
@@ -236,20 +237,22 @@ class Planer:
         __self__.targets[PLAN_PATROL] = list(k for k,v in sorted(target_values.items(),key=lambda item:item[1]))
         log(f'Patrol Fields: {__self__.targets[PLAN_PATROL]}')
     def compute_selection(__self__):
-        #Get all elements occoured in the last n computations
-        #Remove all elements seen right now
-        #Order by euclidian distance (as it need to be orderd)
-        if len(__self__.singal_memory) < NUM_SIGNAL_OCCOURENCES:
-            log('Not enough memory data for singal planing.')
-            return
-        relevant_targets = __self__.singal_memory[-1]
-        for i in range(NUM_SIGNAL_OCCOURENCES-1):
-            relevant_targets = relevant_targets.intersection(__self__.singal_memory[-i])            
-        if PLAN_COMPUTED in __self__.targets:
-            relevant_targets.update(__self__.targets[PLAN_COMPUTED])
-        relevant_targets -= set(__self__.world.visible_fields[__self__.world.bot_pos])
-        relevant_targets -= {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)}
-        __self__.targets[PLAN_COMPUTED] = list(sorted(relevant_targets,key= lambda x: euclidian_distance(__self__.world.bot_pos,x)))
+        # #Get all elements occoured in the last n computations
+        # #Remove all elements seen right now
+        # #Order by euclidian distance (as it need to be orderd)
+        # if len(__self__.singal_memory) < NUM_SIGNAL_OCCOURENCES:
+        #     log('Not enough memory data for singal planing.')
+        #     return
+        # relevant_targets = __self__.singal_memory[-1]
+        # for i in range(NUM_SIGNAL_OCCOURENCES-1):
+        #     relevant_targets = relevant_targets.intersection(__self__.singal_memory[-i])            
+        # if PLAN_COMPUTED in __self__.targets:
+        #     relevant_targets.update(__self__.targets[PLAN_COMPUTED])
+        # relevant_targets -= set(__self__.world.visible_fields[__self__.world.bot_pos])
+        # relevant_targets -= {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)}
+        # __self__.targets[PLAN_COMPUTED] = list(sorted(relevant_targets,key= lambda x: euclidian_distance(__self__.world.bot_pos,x)))
+       #__self__.targets[PLAN_COMPUTED] = list(sorted(__self__.gems_computed,key= lambda x: euclidian_distance(__self__.world.bot_pos,x)))
+        log('Computateion already done in singal analysis, skipping compute selection')
     def plan_global(__self__):
         if __self__.current_path and not (__self__.world.world_changed and __self__.targets_changd):
             log('Use existing path')
@@ -283,8 +286,7 @@ class Planer:
         for d in distances:
             signal_map += __self__.gaussian_distance_ring(__self__.world.bot_pos,d,sigma=SIGMA)
         signal_map /= np.max(signal_map)
-        __self__.signal_map = SIGNAL_MAP_DECAY * __self__.signal_map + signal_map
-#        __self__.signal_map /= __self__.world.field
+        __self__.signal_map = SIGNAL_MAP_DECAY * __self__.signal_map + (1.0-SIGNAL_MAP_DECAY)*signal_map
         __self__.signal_map/=np.max(__self__.signal_map)
         __self__.signal_map[__self__.signal_map < SIGNAL_THRESHHOLD] = 0
         log(f'Max value on singal map: {np.max(__self__.signal_map)}')
@@ -293,17 +295,18 @@ class Planer:
             np.savetxt(f'{folder}/{len(os.listdir(folder)):04d}.csv',__self__.signal_map)
         elif os.path.exists(folder):
             log(f'Files in {folder}: {len(os.listdir(folder))}')
-        gems_computed = {(x,y) for  x,y in np.argwhere(__self__.signal_map>COPUTE_THREASHOLD)}
-        gems_computed.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
-        __self__.singal_memory.append(gems_computed)
-        if len(gems_computed) == 0:
+        __self__.gems_computed = {(x,y) for  x,y in np.argwhere(__self__.signal_map>COPUTE_THREASHOLD)}
+        __self__.gems_computed.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
+        __self__.gems_computed.difference_update(set(__self__.world.visible_fields[__self__.world.bot_pos]))
+        # __self__.singal_memory.append(gems_computed)
+        if len(__self__.gems_computed) == 0:
             __self__.signal_map = np.zeros_like(__self__.signal_map)
-        #Clean up already computed gems
-        if PLAN_COMPUTED in __self__.targets:
-            l = set(__self__.targets[PLAN_COMPUTED])
-            l.difference_update(__self__.world.visible_fields[__self__.world.bot_pos])
-            l.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
-            __self__.targets[PLAN_COMPUTED] = list(sorted(l,key=lambda x: euclidian_distance(x,__self__.world.bot_pos)))
+        # #Clean up already computed gems
+        # if PLAN_COMPUTED in __self__.targets:
+        #     l = set(__self__.targets[PLAN_COMPUTED])
+        #     l.difference_update(__self__.world.visible_fields[__self__.world.bot_pos])
+        #     l.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
+        __self__.targets[PLAN_COMPUTED] = list(sorted(__self__.gems_computed,key=lambda x: euclidian_distance(x,__self__.world.bot_pos)))
     def signal_level_to_distance(__self__,signal_level:float)->float:
         # Distance formula
         # s = 1 / (1 + (d/r)²)
@@ -316,9 +319,12 @@ class Planer:
         # d/r = sqrt((1/s) - 1)
         # d = r * sqrt((1/s) - 1)
         # d = r * sqrt((1 - s)/s)
+
         if signal_level > 1:
-            log(f'Invalid signal level {signal_level}, returning inf distance',log_level.ERROR)
-            return float('inf')
+#            log(f'Invalid signal level {signal_level}, returning inf distance',log_level.ERROR)
+#            return float('inf')
+            log(f'Singal level {signal_level} greater than 1, using half of Singal')
+            signal_level = 1.0
         if signal_level <= 0:
             log(f'Signal level is 0, returning inf distance',log_level.INFO)
             return float('inf')
