@@ -24,10 +24,10 @@ for k,v in DIRS.items():
 #GAUS_RING_INTERVALS = [3.0, 2.5, 2.0, 1.5, 1.0]#, 0.75, 0.66, 0.5, 0.33, 0.25]
 GAUS_RING_INTERVALS = [1.0, 0.75, 0.66, 0.5, 0.33, 0.25]
 # GAUS_RING_INTERVALS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-SIGMA = 2.0
-SIGNAL_MAP_DECAY = 0.9
+SIGMA = 1.5
+SIGNAL_MAP_DECAY = 0.7
 SIGNAL_THRESHHOLD = 0.5
-COPUTE_THREASHOLD = 0.75
+COPUTE_THREASHOLD = 0.075
 NUM_SIGNAL_OCCOURENCES = 2
 #endregion
 MAX_PATROL_TARGET = 10
@@ -120,6 +120,7 @@ class Planer:
     def __init__(__self__,world:World):
         __self__.world = world
         __self__.targets_changd = True
+        __self__.first_signal = True
         __self__.signal_radius = 0.0
         __self__.targets = {}
         __self__.computed_not_in_counter = 0
@@ -237,22 +238,14 @@ class Planer:
         __self__.targets[PLAN_PATROL] = list(k for k,v in sorted(target_values.items(),key=lambda item:item[1]))
         log(f'Patrol Fields: {__self__.targets[PLAN_PATROL]}')
     def compute_selection(__self__):
-        # #Get all elements occoured in the last n computations
-        # #Remove all elements seen right now
-        # #Order by euclidian distance (as it need to be orderd)
-        # if len(__self__.singal_memory) < NUM_SIGNAL_OCCOURENCES:
-        #     log('Not enough memory data for singal planing.')
-        #     return
-        # relevant_targets = __self__.singal_memory[-1]
-        # for i in range(NUM_SIGNAL_OCCOURENCES-1):
-        #     relevant_targets = relevant_targets.intersection(__self__.singal_memory[-i])            
-        # if PLAN_COMPUTED in __self__.targets:
-        #     relevant_targets.update(__self__.targets[PLAN_COMPUTED])
-        # relevant_targets -= set(__self__.world.visible_fields[__self__.world.bot_pos])
-        # relevant_targets -= {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)}
-        # __self__.targets[PLAN_COMPUTED] = list(sorted(relevant_targets,key= lambda x: euclidian_distance(__self__.world.bot_pos,x)))
-       #__self__.targets[PLAN_COMPUTED] = list(sorted(__self__.gems_computed,key= lambda x: euclidian_distance(__self__.world.bot_pos,x)))
-        log('Computateion already done in singal analysis, skipping compute selection')
+        i = None
+        for i in range(len(__self__.targets.get(PLAN_COMPUTED,[]))):
+            p,_ = __self__.path_planing(__self__.world.bot_pos,__self__.targets[PLAN_COMPUTED][i])
+            if len(p) > 1:
+                break
+        if i != None:
+            log(f'Removing the first {i} elements.')
+            __self__.targets[PLAN_COMPUTED] = __self__.targets[PLAN_COMPUTED][i:]
     def plan_global(__self__):
         if __self__.current_path and not (__self__.world.world_changed and __self__.targets_changd):
             log('Use existing path')
@@ -275,18 +268,35 @@ class Planer:
                 __self__.current_path = __self__.current_path[1:]
                 if len(__self__.current_path) > 0:
                     break
-    def analyse_signal(__self__,singal_strength):
-        if singal_strength <= 0:
-            log('Discarding Singal analysis.')
+    def analyse_signal(__self__,singal_strength:float|list[float]):
+        if isinstance(singal_strength,float):
+            if singal_strength <= 0:
+                log('Discarding Singal analysis.')
+                return
+            log('Starting Global Singal analysis.')
+            base_distance = __self__.signal_level_to_distance(singal_strength) 
+            distances = [(1.0/x) * base_distance for x in GAUS_RING_INTERVALS]
+        elif isinstance(singal_strength,list):
+            log('Starting channel singal analysis')
+            distances = [__self__.signal_level_to_distance(x) for x in singal_strength if x > 0]
+        else:
+            log(f'Could not handle singal of type {type(singal_strength)}, clean up and skip calculation')
+            __self__.signal_map *= 0.0
+            __self__.targets.get(PLAN_COMPUTED,[]).clear()
+            __self__.first_signal = True
             return
-        log('Starting Singal analysis.')
-        base_distance = __self__.signal_level_to_distance(singal_strength) 
-        distances = [(1.0/x) * base_distance for x in GAUS_RING_INTERVALS]
+        np.nan_to_num(__self__.signal_map,copy=False,nan=0.0)
+        if len(__self__.targets.get(PLAN_COMPUTED,[])) < len(distances):
+            __self__.first_signal = True
         signal_map = np.zeros_like(__self__.world.field,np.float64)
         for d in distances:
             signal_map += __self__.gaussian_distance_ring(__self__.world.bot_pos,d,sigma=SIGMA)
         signal_map /= np.max(signal_map)
-        __self__.signal_map = SIGNAL_MAP_DECAY * __self__.signal_map + (1.0-SIGNAL_MAP_DECAY)*signal_map
+        if __self__.first_signal:
+            __self__.first_signal = False
+            __self__.signal_map = signal_map
+        else:
+            __self__.signal_map = SIGNAL_MAP_DECAY * __self__.signal_map + (1.0-SIGNAL_MAP_DECAY)*signal_map
         __self__.signal_map/=np.max(__self__.signal_map)
         __self__.signal_map[__self__.signal_map < SIGNAL_THRESHHOLD] = 0
         log(f'Max value on singal map: {np.max(__self__.signal_map)}')
@@ -299,8 +309,8 @@ class Planer:
         __self__.gems_computed.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
         __self__.gems_computed.difference_update(set(__self__.world.visible_fields[__self__.world.bot_pos]))
         # __self__.singal_memory.append(gems_computed)
-        if len(__self__.gems_computed) == 0:
-            __self__.signal_map = np.zeros_like(__self__.signal_map)
+        # if len(__self__.gems_computed) == 0:
+        #     __self__.signal_map = np.zeros_like(__self__.signal_map)
         # #Clean up already computed gems
         # if PLAN_COMPUTED in __self__.targets:
         #     l = set(__self__.targets[PLAN_COMPUTED])
@@ -377,6 +387,8 @@ class signal_bot:
             __self__.planer.plan_global()
             __self__.select_move()
     def analyse(__self__,data:dict):
+        # with open('file.json','w') as f:
+        #     json.dump(data,f)
         __self__.world.world_changed = False
         if __self__.first_tick:
             __self__.analyse_first_tick(data)
@@ -384,7 +396,8 @@ class signal_bot:
         __self__.world.update_walls(data.get("wall",[]))
         __self__.world.update_floor(data.get("floor",[]))
         __self__.world.update_gems(data.get('visible_gems',[]))
-        __self__.planer.analyse_signal(data.get('signal_level',0))
+        # __self__.planer.analyse_signal(data.get('signal_level',0))
+        __self__.planer.analyse_signal(data.get('channels',data.get('singal_level',0)))
     def analyse_first_tick(__self__,data):
         log('First Tick',log_level.DEBUG)
         __self__.first_tick = False

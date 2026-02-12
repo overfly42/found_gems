@@ -188,3 +188,9 @@ New implementation Dijstra
     ruby runner.rb --seed 113chwcufi ../found_gems  timeout -> 4015 -> 5170
 2025-02-04
     ruby runner.rb --seed 2cxj5e5383  ../found_gems  6258   --> 8312 --> 7983 -> 6191   -> 6229 
+ruby runner.rb --seed   ../found_gems
+Date            Seed    Iteration
+2025-02-12  tlio18j3t   hard timeout    ->  11696   ->  12763 (without singal analysis) ->  13999
+            1l7c7dwqoa  9687            -> 11501
+            41b23s742   5451            -> 10672
+profile 18jo2laf0f  150702 -> 174409
