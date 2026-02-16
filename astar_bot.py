@@ -211,16 +211,29 @@ class Planer:
             return
         combinations = list(permutations(__self__.world.gems_seen))
         distance_score = []
-        for i in range(len(combinations)):
-            combo = [__self__.world.bot_pos]
-            combo.extend(combinations[i])
-            distance_score.append(0)
-            for j in range(len(combo)-1):
-                distance_score[i] += __self__.path_planing(combo[j],combo[j+1])[1]
-            log(f'Combo {combo} has length {distance_score[i]}')
-        min_index = np.argmin(distance_score)
-        __self__.targets[PLAN_GEMS] = combinations[min_index]
-        log(f'Found {len(combinations)} gem combinations')
+        if len(combinations) < 30: #Actually this is up to 4 gems -> 24 combinations
+            for i in range(len(combinations)):
+                combo = [__self__.world.bot_pos]
+                combo.extend(combinations[i])
+                distance_score.append(0)
+                for j in range(len(combo)-1):
+                    distance_score[i] += __self__.path_planing(combo[j],combo[j+1])[1]
+                log(f'Combo {combo} has length {distance_score[i]}')
+            min_index = np.argmin(distance_score)
+            __self__.targets[PLAN_GEMS] = combinations[min_index]
+            log(f'Found {len(combinations)} gem combinations')
+        else:
+            log(f'Found {len(combinations)}: to long for computation, select nearest one.')
+            closest = []
+            for k,v in __self__.world.gems_seen.items():
+                _,cost = __self__.path_planing(__self__.world.bot_pos,k)
+                closest.append((v-cost,k))
+            log(f'{closest}')
+            closest.sort(key=lambda x: x[0],reverse=False)
+            closest = [x[1] for x in closest]
+            __self__.targets[PLAN_GEMS] = closest
+            log(f'{closest}')            
+
     def patrol_selection(__self__):
         '''
             This selects the next position to see a field, that is not for longest time.

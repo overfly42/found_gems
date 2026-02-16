@@ -194,3 +194,7 @@ Date            Seed    Iteration
             1l7c7dwqoa  9687            -> 11501
             41b23s742   5451            -> 10672
 profile 18jo2laf0f  150702 -> 174409
+
+ruby runner.rb --seed m8b23qx36  ../found_gems hard timeout --> 10595 -> 9909
+ruby runner.rb --seed 2gj7a2o9hm  ../found_gems  13078 --> 11923 --> 10647   -> 11923
+ruby runner.rb --seed 1smfjtilmk --profile ../found_gems
