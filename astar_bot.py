@@ -211,7 +211,7 @@ class Planer:
             return
         combinations = list(permutations(__self__.world.gems_seen))
         distance_score = []
-        if len(combinations) < 30: #Actually this is up to 4 gems -> 24 combinations
+        if len(combinations) < 10: #Actually this is up to 4 gems -> 24 combinations or 3 gems -> 6 combinations, but we want to be safe
             for i in range(len(combinations)):
                 combo = [__self__.world.bot_pos]
                 combo.extend(combinations[i])
