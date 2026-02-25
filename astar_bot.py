@@ -25,9 +25,9 @@ for k,v in DIRS.items():
 GAUS_RING_INTERVALS = [1.0, 0.75, 0.66, 0.5, 0.33, 0.25]
 # GAUS_RING_INTERVALS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 SIGMA = 1.5
-SIGNAL_MAP_DECAY = 0.7
+SIGNAL_MAP_DECAY = 0.9
 SIGNAL_THRESHHOLD = 0.5
-COPUTE_THREASHOLD = 0.075
+COPUTE_THREASHOLD = 0.75
 NUM_SIGNAL_OCCOURENCES = 2
 #endregion
 MAX_PATROL_TARGET = 10
@@ -89,6 +89,7 @@ class World:
         value_after = np.sum(data)
         if value_after != value_before:
             __self__.world_changed = True
+            log('Changing world (new Walls).')
     def update_floor(__self__,data:list):
         value_before = np.sum(data)
         __self__.fields_seen ={k:v+1 for k,v in __self__.fields_seen.items()}
@@ -98,6 +99,7 @@ class World:
         value_after = np.sum(data)
         if value_after != value_before:
             __self__.world_changed = True
+            log('Changing world (new Floor).')
         log(f'Floor update done, new count: {np.unique(__self__.field,return_counts=True)}')
         __self__.update_fields(__self__.bot_pos,data)
     def update_fields(__self__,current_pos:tuple[int,int],data:list):
@@ -114,12 +116,13 @@ class World:
         value_after = len(__self__.gems_seen)
         if value_before != value_after:
             __self__.world_changed = True
-        log(f'There are currently {len(__self__.gems_seen)} in the list')
+            log('Changing world (new Gems).')
+        log(f'There are currently {len(__self__.gems_seen)} Gems in the list')
 
 class Planer:
     def __init__(__self__,world:World):
         __self__.world = world
-        __self__.targets_changd = True
+        __self__.targets_changed = True
         __self__.first_signal = True
         __self__.signal_radius = 0.0
         __self__.targets = {}
@@ -136,6 +139,8 @@ class Planer:
             PLAN_SIGNAL:__self__.not_implemented_yet,
             PLAN_UNKNOWN:__self__.exploration
         }
+    def new_tick(__self__):
+        __self__.singal_memory.append({})
     def not_implemented_yet(__self__):
         log('This Plan is not implemented yet')
     def path_planing(__self__,start:tuple[int,int],target:tuple[int,int]) -> tuple[list[tuple[int,int]],int]:
@@ -260,7 +265,7 @@ class Planer:
             log(f'Removing the first {i} elements.')
             __self__.targets[PLAN_COMPUTED] = __self__.targets[PLAN_COMPUTED][i:]
     def plan_global(__self__):
-        if __self__.current_path and not (__self__.world.world_changed and __self__.targets_changd):
+        if __self__.current_path and not (__self__.world.world_changed or __self__.targets_changed):
             log('Use existing path')
             return
         log('Calculating new Path')
@@ -281,6 +286,50 @@ class Planer:
                 __self__.current_path = __self__.current_path[1:]
                 if len(__self__.current_path) > 0:
                     break
+    def analyse_multi_signal(__self__,signals:list):
+        log('Starting multi channel singal analysis')
+        if not isinstance(signals,list):
+            log(f'Could not handle singal of type {type(signals)}, clean up and skip calculation')
+            __self__.signal_map *= 0.0
+            __self__.targets.get(PLAN_COMPUTED,[]).clear()
+            return
+        #Compute distances and distributions for each channel
+        prev_mem = None if len(__self__.singal_memory) < 2 else __self__.singal_memory[-2]
+        cur_mem = __self__.singal_memory[-1]
+        cur_mem['channels'] = signals
+        cur_mem['distribution'] = []
+        cur_mem['distances'] = []
+        for i in range(len(signals)):
+            last_signal_distribution = np.zeros_like(__self__.world.field,np.float64) if prev_mem == None else prev_mem['distribution'][i]
+            if signals[i] <= 0:
+                last_signal_distribution = np.zeros_like(__self__.world.field,np.float64)
+            else:
+                log(f'Channel {i} has signal strength {signals[i]}')
+            cur_mem['distances'].append(__self__.signal_level_to_distance(signals[i]))
+            signal_distribution = __self__.gaussian_distance_ring(__self__.world.bot_pos,cur_mem['distances'][-1],sigma=SIGMA)
+            signal_distribution = SIGNAL_MAP_DECAY * last_signal_distribution + (1.0-SIGNAL_MAP_DECAY)*signal_distribution
+            signal_distribution /= np.max(signal_distribution)
+            signal_distribution = np.nan_to_num(signal_distribution,nan=0.0)
+            cur_mem['distribution'].append(signal_distribution)
+            folder_path = f'data/{i}/'
+            if os.path.exists(folder_path):
+                np.savetxt(f'{folder_path}{len(__self__.singal_memory):04d}.csv',signal_distribution)
+        cur_mem['min_distance_index'] = np.argmin(cur_mem['distances'])
+        min_dist_gem = cur_mem['distribution'][cur_mem['min_distance_index']]
+        max_val = np.max(min_dist_gem)
+        __self__.gems_computed = {(x,y) for  x,y in np.argwhere(min_dist_gem>max_val*COPUTE_THREASHOLD)}
+        __self__.targets[PLAN_COMPUTED] = list(sorted(__self__.gems_computed,key=lambda x: euclidian_distance(x,__self__.world.bot_pos)))
+        if prev_mem != None and cur_mem['min_distance_index'] != prev_mem['min_distance_index']:
+            log('Distance index has changed, need to recompute path.')
+            __self__.targets_changed = True
+            log(f'New computed area has {len(__self__.targets.get(PLAN_COMPUTED,[]))} potential gems.')
+        else:
+            log('Check if current path is within targets.')
+            num_overlaps = set(__self__.current_path).intersection(set(__self__.targets.get(PLAN_COMPUTED,[])))
+            if len(num_overlaps) == 0:
+                log('Current path is not within targets, need to recompute path.')
+                __self__.targets_changed = True
+
     def analyse_signal(__self__,singal_strength:float|list[float]):
         if isinstance(singal_strength,float):
             if singal_strength <= 0:
@@ -395,7 +444,8 @@ class signal_bot:
         __self__.first_tick = True
     def main(__self__):
         for line in sys.stdin:
-            data = json.loads(line) #
+            data = json.loads(line)
+            __self__.planer.new_tick()
             __self__.analyse(data)
             __self__.planer.plan_global()
             __self__.select_move()
@@ -410,7 +460,8 @@ class signal_bot:
         __self__.world.update_floor(data.get("floor",[]))
         __self__.world.update_gems(data.get('visible_gems',[]))
         # __self__.planer.analyse_signal(data.get('signal_level',0))
-        __self__.planer.analyse_signal(data.get('channels',data.get('singal_level',0)))
+        #__self__.planer.analyse_signal(data.get('channels',data.get('singal_level',0)))
+        __self__.planer.analyse_multi_signal(data.get('channels',[]))
     def analyse_first_tick(__self__,data):
         log('First Tick',log_level.DEBUG)
         __self__.first_tick = False

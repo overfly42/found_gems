@@ -198,3 +198,9 @@ profile 18jo2laf0f  150702 -> 174409
 ruby runner.rb --seed m8b23qx36  ../found_gems hard timeout --> 10595 -> 9909
 ruby runner.rb --seed 2gj7a2o9hm  ../found_gems  13078 --> 11923 --> 10647   -> 11923
 ruby runner.rb --seed 1smfjtilmk --profile ../found_gems
+
+1tk4tke878 250 --> 10726
+2025-02-25
+1ibldz8esh  3651    ->  5695
+5zfd45zmc   10461   ->  12221
+ekdmsqfy0   13338   ->  12269

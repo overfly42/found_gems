@@ -21,7 +21,7 @@ from matplotlib.widgets import Slider
 # ---------------------------------------------------------
 # Load all CSV files in the current directory
 # ---------------------------------------------------------
-csv_files = sorted(glob.glob("data/*.csv"))
+csv_files = sorted(glob.glob("data/0/*.csv"))
 
 if len(csv_files) == 0:
     raise RuntimeError("No CSV files found in this folder.")
