@@ -268,6 +268,10 @@ class Planer:
         if __self__.current_path and not (__self__.world.world_changed or __self__.targets_changed):
             log('Use existing path')
             return
+        log(f'Current path: {__self__.current_path}')
+        log(f'World changed: {__self__.world.world_changed}, targets changed: {__self__.targets_changed}')
+        __self__.targets_changed = False
+        __self__.world.world_changed = False
         log('Calculating new Path')
         plan_order = [
             PLAN_GEMS,
@@ -299,6 +303,7 @@ class Planer:
         cur_mem['channels'] = signals
         cur_mem['distribution'] = []
         cur_mem['distances'] = []
+        cur_mem['targets'] = []
         for i in range(len(signals)):
             last_signal_distribution = np.zeros_like(__self__.world.field,np.float64) if prev_mem == None else prev_mem['distribution'][i]
             if signals[i] <= 0:
@@ -312,41 +317,39 @@ class Planer:
             signal_distribution = np.nan_to_num(signal_distribution,nan=0.0)
             cur_mem['distribution'].append(signal_distribution)
             max_val = np.max(signal_distribution)
-            cur_mem['targets'] = {(x,y) for  x,y in np.argwhere(signal_distribution>max_val*COPUTE_THREASHOLD)}
+            cur_mem['targets'].append({(x,y) for  x,y in np.argwhere(signal_distribution>max_val*COPUTE_THREASHOLD)})
             folder_path = f'data/{i}/'
             if os.path.exists(folder_path):
                 np.savetxt(f'{folder_path}{len(__self__.singal_memory):04d}.csv',signal_distribution)
-        use_single_best = len([s for s in signals if s > 0]) == 1
-        use_single_best = True
-        cur_mem['min_distance_index'] = np.argmin(cur_mem['distances'])
-        if use_single_best:
-            min_dist_gem = cur_mem['distribution'][cur_mem['min_distance_index']]
-            __self__.gems_computed = cur_mem['targets']
-            __self__.targets[PLAN_COMPUTED] = list(sorted(__self__.gems_computed,key=lambda x: euclidian_distance(x,__self__.world.bot_pos)))
-            if prev_mem != None and cur_mem['min_distance_index'] != prev_mem['min_distance_index']:
-                log('Distance index has changed, need to recompute path.')
-                __self__.targets_changed = True
-                log(f'New computed area has {len(__self__.targets.get(PLAN_COMPUTED,[]))} potential gems.')
-            else:
-                log('Check if current path is within targets.')
-                num_overlaps = set(__self__.current_path).intersection(set(__self__.targets.get(PLAN_COMPUTED,[])))
-                if len(num_overlaps) == 0:
-                    log('Current path is not within targets, need to recompute path.')
-                    __self__.targets_changed = True
+        statistics ={}
+        for targets in cur_mem['targets']:
+            for t in targets:
+                statistics[t] = statistics.get(t,0) + 1
+        if len(statistics) > 0:
+            max_value = max(statistics.values())
         else:
-            all_possible_targets = set()
-            for targets in cur_mem['targets']:
-                all_possible_targets.update(targets)
-            #Calculate the number of gems a given target could be in
-            target_scores = {}
-            for k in all_possible_targets:
-                target_scores[k] = sum([1 for mem in cur_mem['targets'] if k in mem])
-            max_score = max(target_scores.values() or [0])
-            relevant_targets = {k for k,v in target_scores.items() if v == max_score}
-            log(f'Most likely targets: {relevant_targets} with score {max_score}')
-            __self__.gems_computed = relevant_targets
-            __self__.targets[PLAN_COMPUTED] = list(sorted(__self__.gems_computed,key=lambda x: euclidian_distance(x,__self__.world.bot_pos)))
-            
+            max_value = 1
+        cur_mem['min_distance_index'] = np.argmin(cur_mem['distances'])
+        if max_value <= 1:
+#            min_dist_gem = cur_mem['distribution'][cur_mem['min_distance_index']]
+            __self__.gems_computed = cur_mem['targets'][cur_mem['min_distance_index']]
+            log ('Using single signal for target')
+        else:
+            __self__.gems_computed = {k for k,v in statistics.items() if v == max_value}            
+            log ('Using multiple signales for targets')
+        if __self__.gems_computed == None or len(__self__.gems_computed) == 0:
+            return
+        __self__.targets[PLAN_COMPUTED] = list(sorted(__self__.gems_computed,key=lambda x: euclidian_distance(x,__self__.world.bot_pos)))
+        if prev_mem != None and cur_mem['min_distance_index'] != prev_mem['min_distance_index']:
+            log('Distance index has changed, need to recompute path.')
+            __self__.targets_changed = True
+            log(f'New computed area has {len(__self__.targets.get(PLAN_COMPUTED,[]))} potential gems.')
+        else:
+            log('Check if current path is within targets.')
+            num_overlaps = set(__self__.current_path).intersection(set(__self__.targets.get(PLAN_COMPUTED,[])))
+            if len(num_overlaps) == 0:
+                log('Current path is not within targets, need to recompute path.')
+                __self__.targets_changed = True            
                        
 
     def analyse_signal(__self__,singal_strength:float|list[float]):

@@ -201,6 +201,9 @@ ruby runner.rb --seed 1smfjtilmk --profile ../found_gems
 
 1tk4tke878 250 --> 10726
 2025-02-25  1m2nd152y
-1ibldz8esh  3651    ->  5695
-5zfd45zmc   10461   ->  12221
+1ibldz8esh  3651    ->  5695    -> 6360
+5zfd45zmc   10461   ->  12221   -> 14521
 ekdmsqfy0   13338   ->  12269
+2025-02-26  h63cxxzj1 -> 172370 -> 176676
+yxt4rnle    11667 -> 12961
+tsz09py15    6985 -> 7658
