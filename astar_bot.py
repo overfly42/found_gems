@@ -330,12 +330,17 @@ class Planer:
         else:
             max_value = 1
         cur_mem['min_distance_index'] = np.argmin(cur_mem['distances'])
-        if max_value <= 1:
-#            min_dist_gem = cur_mem['distribution'][cur_mem['min_distance_index']]
-            __self__.gems_computed = cur_mem['targets'][cur_mem['min_distance_index']]
-            log ('Using single signal for target')
-        else:
-            __self__.gems_computed = {k for k,v in statistics.items() if v == max_value}            
+#Variante 1: Entweder single best, oder nur gruppen
+#         if max_value <= 1:
+# #            min_dist_gem = cur_mem['distribution'][cur_mem['min_distance_index']]
+#             __self__.gems_computed = cur_mem['targets'][cur_mem['min_distance_index']]
+#             log ('Using single signal for target')
+#         else:
+#             __self__.gems_computed = {k for k,v in statistics.items() if v == max_value}            
+#             log ('Using multiple signales for targets')
+        __self__.gems_computed = set(cur_mem['targets'][cur_mem['min_distance_index']])
+        if max_value > 1:
+            __self__.gems_computed.update({k for k,v in statistics.items() if v == max_value})            
             log ('Using multiple signales for targets')
         if __self__.gems_computed == None or len(__self__.gems_computed) == 0:
             return
@@ -349,7 +354,11 @@ class Planer:
             num_overlaps = set(__self__.current_path).intersection(set(__self__.targets.get(PLAN_COMPUTED,[])))
             if len(num_overlaps) == 0:
                 log('Current path is not within targets, need to recompute path.')
-                __self__.targets_changed = True            
+                __self__.targets_changed = True    
+        walls = {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)}
+        visible = set(__self__.world.visible_fields[__self__.world.bot_pos])
+        __self__.targets[PLAN_COMPUTED] = [t for t in __self__.targets.get(PLAN_COMPUTED,[]) if t not in walls and t not in visible]
+
                        
 
     def analyse_signal(__self__,singal_strength:float|list[float]):
