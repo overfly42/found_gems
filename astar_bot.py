@@ -38,6 +38,12 @@ PLAN_UNKNOWN = 'exploration'
 PLAN_OPPONENTS = 'opponents'
 PLAN_PATROL = 'patrol'
 #endregion
+#region quadrants
+NW = 'North-West'
+NE = 'North-East'
+SW = 'South-West'
+SE = 'South-East'
+#endregion
 
 class field_type(Enum):
     unknown = 10
@@ -81,7 +87,13 @@ class World:
         __self__.field *= field_type.unknown.value
         __self__.width = width
         __self__.height = height
+        __self__.mid_width = width//2
+        __self__.mid_height = height//2
         __self__.world_changed = True
+        __self__.antenna_positions = {NW: (__self__.mid_height//2,__self__.mid_width//2),
+                                      SE: ((3*__self__.mid_height)//2,(3*__self__.mid_width)//2),
+                                      NE: (__self__.mid_height//2,(3*__self__.mid_width)//2),
+                                      SW: ((3*__self__.mid_height)//2,__self__.mid_width//2)}
     def update_walls(__self__,data:list):
         value_before = np.sum(data)
         for wall in data:
@@ -139,6 +151,7 @@ class Planer:
             PLAN_SIGNAL:__self__.not_implemented_yet,
             PLAN_UNKNOWN:__self__.exploration
         }
+        __self__.antenna_positions = [NW,SE,NE,NW]
     def new_tick(__self__):
         __self__.singal_memory.append({})
     def not_implemented_yet(__self__):
@@ -492,12 +505,18 @@ class signal_bot:
         __self__.world.update_gems(data.get('visible_gems',[]))
         # __self__.planer.analyse_signal(data.get('signal_level',0))
         #__self__.planer.analyse_signal(data.get('channels',data.get('singal_level',0)))
-        __self__.planer.analyse_multi_signal(data.get('channels',[]))
+        if 'channels' in data:
+            __self__.planer.analyse_multi_signal(data.get('channels',[]))
+        elif 'antenna_singals' in data:
+            __self__.planer.analyse_antenna_signal(data.get('antenna_singals',[]))
     def analyse_first_tick(__self__,data):
         log('First Tick',log_level.DEBUG)
         __self__.first_tick = False
         __self__.world.update_config(width=data['config']['width'],height = data['config']['height'])
         __self__.planer.signal_radius  = data['config']["signal_radius"]
+        __self__.planer.max_antenna = data['config'].get("max_antenna",0)
+        __self__.planer.set_antenna = 0
+        __self__.planer.target_antenna_num = min(2,__self__.planer.max_antenna) 
     def analyse_bot(__self__,data):
         pos = data['bot']
         __self__.world.bot_pos = (pos[1],pos[0])
