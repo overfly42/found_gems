@@ -37,6 +37,7 @@ PLAN_SIGNAL = 'potential_gems'
 PLAN_UNKNOWN = 'exploration'
 PLAN_OPPONENTS = 'opponents'
 PLAN_PATROL = 'patrol'
+PLAN_ANTENNA = 'antenna'
 #endregion
 #region quadrants
 NW = 'North-West'
@@ -149,9 +150,12 @@ class Planer:
             PLAN_OPPONENTS:__self__.not_implemented_yet,
             PLAN_PATROL:__self__.patrol_selection,
             PLAN_SIGNAL:__self__.not_implemented_yet,
-            PLAN_UNKNOWN:__self__.exploration
+            PLAN_UNKNOWN:__self__.exploration,
+            PLAN_ANTENNA:__self__.antenna_placement
         }
         __self__.antenna_positions = [NW,SE,NE,NW]
+        __self__.antenna_placed = {x:0 for x in __self__.antenna_positions}
+        __self__.target_antenna_num = 0
     def new_tick(__self__):
         __self__.singal_memory.append({})
     def not_implemented_yet(__self__):
@@ -251,6 +255,26 @@ class Planer:
             closest = [x[1] for x in closest]
             __self__.targets[PLAN_GEMS] = closest
             log(f'{closest}')            
+    def antenna_placement(__self__):
+        __self__.next_antenna = None
+        max_placed_antenna = max(__self__.antenna_placed.values())
+        next_antennas = [k for k,v in __self__.antenna_placed.items() if v < max_placed_antenna]
+        antennas_left = __self__.target_antenna_num - sum(__self__.antenna_placed.values())
+        if antennas_left <= 0:
+            log('No antennas left to place.')
+            __self__.targets[PLAN_ANTENNA] = []
+            return
+        if len(next_antennas) == 0:
+            log('All antennas are placed equally, placing next one.')
+            next_antennas = list(__self__.antenna_positions)
+        if len(next_antennas) > antennas_left:
+            log(f'More antennas to place than left, reducing options to {antennas_left}.')
+            next_antennas = next_antennas[:antennas_left]
+        distances = {k:euclidian_distance(__self__.world.bot_pos,__self__.world.antenna_positions[k]) for  k in next_antennas}
+        next_antenna = min(distances,key=distances.get)
+        log(f'Next antenna to place: {next_antenna} at distance {distances[next_antenna]}')
+        __self__.targets[PLAN_ANTENNA] = [__self__.world.antenna_positions[next_antenna]]
+        __self__.next_antenna = next_antenna
 
     def patrol_selection(__self__):
         '''
@@ -288,6 +312,7 @@ class Planer:
         log('Calculating new Path')
         plan_order = [
             PLAN_GEMS,
+            PLAN_ANTENNA,
             PLAN_COMPUTED,
             PLAN_UNKNOWN,
             PLAN_SIGNAL,
@@ -514,9 +539,10 @@ class signal_bot:
         __self__.first_tick = False
         __self__.world.update_config(width=data['config']['width'],height = data['config']['height'])
         __self__.planer.signal_radius  = data['config']["signal_radius"]
-        __self__.planer.max_antenna = data['config'].get("max_antenna",0)
+        __self__.planer.max_antenna = data['config'].get("max_antennas",-1)
         __self__.planer.set_antenna = 0
         __self__.planer.target_antenna_num = min(2,__self__.planer.max_antenna) 
+        log(f'Setting target antenna num to {__self__.planer.target_antenna_num}')
     def analyse_bot(__self__,data):
         pos = data['bot']
         __self__.world.bot_pos = (pos[1],pos[0])
@@ -525,8 +551,9 @@ class signal_bot:
             return ''
         maps = {}
         highlight = []
-        for pos in __self__.planer.targets[PLAN_UNKNOWN]:
-            highlight.append([int(pos[1]),int(pos[0]),'#FFFFFF'])
+        if PLAN_UNKNOWN in __self__.planer.targets and __self__.planer.targets[PLAN_UNKNOWN]:
+            for pos in __self__.planer.targets[PLAN_UNKNOWN]:
+                highlight.append([int(pos[1]),int(pos[0]),'#FFFFFF'])
         for pos in __self__.planer.current_path:
             highlight.append([int(pos[1]),int(pos[0]),'#F00000'])
         if PLAN_COMPUTED in __self__.planer.targets and __self__.planer.targets[PLAN_COMPUTED]:
@@ -537,7 +564,19 @@ class signal_bot:
         maps['highlight'] = highlight
         return ' ' + json.dumps(maps)
     def select_move(__self__):
-        if __self__.planer.current_path:
+        if __self__.planer.next_antenna != None and len(__self__.planer.current_path) == 1:
+            log(f'Moving towards antenna {__self__.planer.next_antenna} at position {__self__.world.antenna_positions[__self__.planer.next_antenna]}')
+            direction = (np.sign(__self__.world.antenna_positions[__self__.planer.next_antenna][0]-__self__.world.bot_pos[0]),np.sign(__self__.world.antenna_positions[__self__.planer.next_antenna][1]-__self__.world.bot_pos[1]))
+            log(f'selected direction: {direction}')
+            move = f'PA{DIRS_INV[direction]}'
+            __self__.planer.antenna_placed[__self__.planer.next_antenna] += 1
+            __self__.planer.next_antenna = None
+            bp = __self__.world.bot_pos 
+            nd = DIRS[DIRS_INV[direction]]
+            xxx = (bp[0]+nd[0],bp[1]+nd[1])
+            __self__.world.fields_seen.pop(xxx,None)
+            log(f'bot will move to {xxx}')
+        elif __self__.planer.current_path:
             log(f'Path length: {len(__self__.planer.current_path)}')
             next_pos = __self__.planer.current_path[0]
             del __self__.planer.current_path[0]
