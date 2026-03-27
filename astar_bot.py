@@ -569,13 +569,14 @@ class signal_bot:
             direction = (np.sign(__self__.world.antenna_positions[__self__.planer.next_antenna][0]-__self__.world.bot_pos[0]),np.sign(__self__.world.antenna_positions[__self__.planer.next_antenna][1]-__self__.world.bot_pos[1]))
             log(f'selected direction: {direction}')
             move = f'PA{DIRS_INV[direction]}'
-            __self__.planer.antenna_placed[__self__.planer.next_antenna] += 1
-            __self__.planer.next_antenna = None
             bp = __self__.world.bot_pos 
-            nd = DIRS[DIRS_INV[direction]]
-            xxx = (bp[0]+nd[0],bp[1]+nd[1])
-            __self__.world.fields_seen.pop(xxx,None)
-            log(f'bot will move to {xxx}')
+            if move != 'PAWAIT':
+                __self__.planer.antenna_placed[__self__.planer.next_antenna] += 1
+                nd = DIRS[DIRS_INV[direction]]
+                xxx = (bp[0]+nd[0],bp[1]+nd[1])
+                __self__.world.fields_seen.pop(xxx,None)
+                log(f'bot will move to {xxx}')
+            __self__.planer.next_antenna = None
         elif __self__.planer.current_path:
             log(f'Path length: {len(__self__.planer.current_path)}')
             next_pos = __self__.planer.current_path[0]
