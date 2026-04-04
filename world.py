@@ -106,3 +106,13 @@ class World:
             __self__.world_changed = True
             log('Changing world (new Gems).')
         log(f'There are currently {len(__self__.gems_seen)} Gems in the list')
+    def update_bot(__self__,data:dict):
+        pos = data['bot']
+        __self__.bot_pos = (pos[1],pos[0])
+    def analyse_world(__self__,data:dict):
+        __self__.world_changed = False
+        __self__.history.append(data)
+        __self__.update_bot(data)
+        __self__.update_walls(data.get("wall",[]))
+        __self__.update_floor(data.get("floor",[]))
+        __self__.update_gems(data.get('visible_gems',[]))

@@ -1,12 +1,15 @@
 import numpy as np
 from collections import deque, defaultdict
 from itertools import permutations
+import random
+
+random.seed(1)
 
 from world import *
 from analyser import *
 from common import *
 
-class PathPlanner:
+class PathPlannerAStar:
     def __init__(self, world: World):
         self.world = world
 
@@ -71,7 +74,8 @@ class Planer:
         __self__.singal_memory = []
         __self__.current_path:list[tuple[int,int]] = []
         __self__.signal_map = np.zeros_like(__self__.world.field)
-        __self__.path_planner = PathPlanner(__self__.world)
+        __self__.path_planner = PathPlannerAStar(__self__.world)
+        __self__.plan_patrol = PlanPatrol(world,__self__.path_planner)
         __self__.global_signal_analyzer = GlobalSignalAnalyzer(__self__.world)
         __self__.channel_signal_analyzer = ChannelSignalAnalyzer(__self__.world)
         __self__.antenna_signal_analyzer = AntennaSignalAnalyzer(__self__.world)
@@ -79,7 +83,8 @@ class Planer:
             PLAN_COMPUTED:__self__.compute_selection,
             PLAN_GEMS:__self__.gem_selection,
             PLAN_OPPONENTS:__self__.not_implemented_yet,
-            PLAN_PATROL:__self__.patrol_selection,
+            # PLAN_PATROL:__self__.patrol_selection,
+            PLAN_PATROL:__self__.plan_patrol.plan,
             PLAN_SIGNAL:__self__.not_implemented_yet,
             PLAN_UNKNOWN:__self__.exploration,
             PLAN_ANTENNA:__self__.antenna_placement
@@ -90,6 +95,15 @@ class Planer:
     def new_tick(__self__):
         __self__.singal_memory.append({})
         __self__.channel_signal_analyzer.new_tick()
+    def analyse(__self__,data:dict):
+        __self__.new_tick()
+        # if 'signal_level' in data:
+        #     __self__.analyse_global_signal(data.get('signal_level', 0.0))
+        # if 'channels' in data:
+        #     __self__.analyse_channel_signal(data.get('channels', []))
+        # elif 'antenna_signals' in data:
+        #     __self__.analyse_antenna_signal(data.get('antenna_signals', []))
+        __self__.plan_global()
     def not_implemented_yet(__self__):
         log('This Plan is not implemented yet')
 
@@ -173,22 +187,6 @@ class Planer:
         __self__.targets[PLAN_ANTENNA] = [__self__.world.antenna_positions[next_antenna]]
         __self__.next_antenna = next_antenna
 
-    def patrol_selection(__self__):
-        '''
-            This selects the next position to see a field, that is not for longest time.
-        '''
-        max_not_seen_value = max(__self__.world.fields_seen.values())
-        relevant_fields = {k for k,v in __self__.world.fields_seen.items() if v == max_not_seen_value}
-        log(f'Patrol Relevant Targets: {relevant_fields}')
-        possible_targets = {k for k,v in __self__.world.visible_fields.items() if len(relevant_fields.intersection(v)) > 0}
-        log(f'Patrol Possible Targets: {possible_targets}')
-        possible_targets = sorted(possible_targets,key= lambda x:euclidian_distance(__self__.world.bot_pos,x))
-        if len(possible_targets) > MAX_PATROL_TARGET:
-            log(f'Reducing possible targets to {MAX_PATROL_TARGET}')
-            possible_targets = possible_targets[:MAX_PATROL_TARGET]
-        target_values =  {k:__self__.path_planing(__self__.world.bot_pos,k)[1] for k in possible_targets}
-        __self__.targets[PLAN_PATROL] = list(k for k,v in sorted(target_values.items(),key=lambda item:item[1]))
-        log(f'Patrol Fields: {__self__.targets[PLAN_PATROL]}')
     def compute_selection(__self__):
         i = None
         for i in range(len(__self__.targets.get(PLAN_COMPUTED,[]))):
@@ -219,7 +217,9 @@ class Planer:
         __self__.current_path = []
         for plan in plan_order:
             log(f'Using {plan}')
-            __self__.planing_actions[plan]()
+            targets = __self__.planing_actions[plan]()
+            if targets != None:
+                __self__.targets[plan] = targets
             if plan in __self__.targets and len(__self__.targets[plan]) > 0:
                 __self__.current_path,_ = __self__.path_planing(__self__.world.bot_pos,__self__.targets[plan][0])
                 __self__.current_path = __self__.current_path[1:]
@@ -298,3 +298,74 @@ class Planer:
         grid = amplitude * np.exp(-(dist - target_distance)**2 / (2 * sigma**2))
 
         return grid
+    def get_next_move(__self__)->str:
+        if __self__.next_antenna != None and len(__self__.current_path) == 1:
+            log(f'Moving towards antenna {__self__.next_antenna} at position {__self__.world.antenna_positions[__self__.next_antenna]}')
+            direction = (np.sign(__self__.world.antenna_positions[__self__.next_antenna][0]-__self__.world.bot_pos[0]),np.sign(__self__.world.antenna_positions[__self__.next_antenna][1]-__self__.world.bot_pos[1]))
+            log(f'selected direction: {direction}')
+            move = f'PA{DIRS_INV[direction]}'
+            bp = __self__.world.bot_pos 
+            if move != 'PAWAIT':
+                __self__.antenna_placed[__self__.next_antenna] += 1
+                nd = DIRS[DIRS_INV[direction]]
+                xxx = (bp[0]+nd[0],bp[1]+nd[1])
+                __self__.world.fields_seen.pop(xxx,None)
+                log(f'bot will move to {xxx}')
+            __self__.next_antenna = None
+        elif __self__.current_path:
+            log(f'Path length: {len(__self__.current_path)}')
+            next_pos = __self__.current_path[0]
+            del __self__.current_path[0]
+            log(f'next_pos: {next_pos}')
+            log(f'bot_pos: {__self__.world.bot_pos}')
+            direction =(next_pos[0]-__self__.world.bot_pos[0],next_pos[1]-__self__.world.bot_pos[1])
+            log(f'selected direction: {direction}')
+            move = DIRS_INV[direction]
+        else:
+            move = random.choice(list(DIRS.keys()))
+            __self__.current_path.clear()
+        if move == 'WAIT':
+            __self__.current_path.clear()
+        return move
+    def highlight_targets(__self__)->str:
+        if LOG_LEVEL == log_level.GAME:
+            return ''
+        maps = {}
+        highlight = []
+        if PLAN_UNKNOWN in __self__.targets and __self__.targets[PLAN_UNKNOWN]:
+            for pos in __self__.targets[PLAN_UNKNOWN]:
+                highlight.append([int(pos[1]),int(pos[0]),'#FFFFFF'])
+        for pos in __self__.current_path:
+            highlight.append([int(pos[1]),int(pos[0]),'#F00000'])
+        if PLAN_COMPUTED in __self__.targets and __self__.targets[PLAN_COMPUTED]:
+            for pos in __self__.targets[PLAN_COMPUTED]:
+                highlight.append([int(pos[1]),int(pos[0]),'#00FF00'])
+            y,x = __self__.targets[PLAN_COMPUTED][0]
+            highlight.append([int(x),int(y),'#991199'])
+        maps['highlight'] = highlight
+        return maps
+
+class PlanBasic:
+    def __init__(__self__,world:World,path_planner:PathPlannerAStar):
+        __self__.world = world
+        __self__.path_planner:PathPlannerAStar = path_planner
+    def plan(__self__) -> list[tuple[int,int]]:
+        raise NotImplementedError()
+class PlanPatrol(PlanBasic):
+    def plan(__self__):
+        '''
+            This selects the next position to see a field, that is not for longest time.
+        '''
+        max_not_seen_value = max(__self__.world.fields_seen.values())
+        relevant_fields = {k for k,v in __self__.world.fields_seen.items() if v == max_not_seen_value}
+        log(f'Patrol Relevant Targets: {relevant_fields}')
+        possible_targets = {k for k,v in __self__.world.visible_fields.items() if len(relevant_fields.intersection(v)) > 0}
+        log(f'Patrol Possible Targets: {possible_targets}')
+        possible_targets = sorted(possible_targets,key= lambda x:euclidian_distance(__self__.world.bot_pos,x))
+        if len(possible_targets) > MAX_PATROL_TARGET:
+            log(f'Reducing possible targets to {MAX_PATROL_TARGET}')
+            possible_targets = possible_targets[:MAX_PATROL_TARGET]
+        target_values =  {k:__self__.path_planner.find_path(__self__.world.bot_pos,k)[1] for k in possible_targets}
+        targets = list(k for k,v in sorted(target_values.items(),key=lambda item:item[1]))
+        log(f'Patrol Fields: {targets}')
+        return targets
