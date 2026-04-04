@@ -75,26 +75,29 @@ class Planer:
         __self__.current_path:list[tuple[int,int]] = []
         __self__.signal_map = np.zeros_like(__self__.world.field)
         __self__.path_planner = PathPlannerAStar(__self__.world)
-        __self__.plan_patrol = PlanPatrol(world,__self__.path_planner)
+        __self__.plan_computed = PlanComputed(world, __self__.path_planner, __self__)
+        __self__.plan_gems = PlanGems(world, __self__.path_planner, __self__)
+        __self__.plan_unknown = PlanUnknown(world, __self__.path_planner, __self__)
+        __self__.plan_antenna = PlanAntenna(world, __self__.path_planner)
+        __self__.plan_patrol = PlanPatrol(world, __self__.path_planner, __self__)
+        __self__.plan_not_implemented = PlanNotImplemented(world, __self__.path_planner, __self__)
         __self__.global_signal_analyzer = GlobalSignalAnalyzer(__self__.world)
         __self__.channel_signal_analyzer = ChannelSignalAnalyzer(__self__.world)
         __self__.antenna_signal_analyzer = AntennaSignalAnalyzer(__self__.world)
         __self__.planing_actions = {
-            PLAN_COMPUTED:__self__.compute_selection,
-            PLAN_GEMS:__self__.gem_selection,
-            PLAN_OPPONENTS:__self__.not_implemented_yet,
-            # PLAN_PATROL:__self__.patrol_selection,
-            PLAN_PATROL:__self__.plan_patrol.plan,
-            PLAN_SIGNAL:__self__.not_implemented_yet,
-            PLAN_UNKNOWN:__self__.exploration,
-            PLAN_ANTENNA:__self__.antenna_placement
+            PLAN_COMPUTED: __self__.plan_computed.plan,
+            PLAN_GEMS: __self__.plan_gems.plan,
+            PLAN_OPPONENTS: __self__.plan_not_implemented.plan,
+            PLAN_PATROL: __self__.plan_patrol.plan,
+            PLAN_SIGNAL: __self__.plan_not_implemented.plan,
+            PLAN_UNKNOWN: __self__.plan_unknown.plan,
+            PLAN_ANTENNA: __self__.plan_antenna.plan
         }
-        __self__.antenna_positions = [NW,SE,NE,NW]
-        __self__.antenna_placed = {x:0 for x in __self__.antenna_positions}
-        __self__.target_antenna_num = 0
     def new_tick(__self__):
         __self__.singal_memory.append({})
         __self__.channel_signal_analyzer.new_tick()
+    def update(__self__):
+        __self__.plan_antenna.update()
     def analyse(__self__,data:dict):
         __self__.new_tick()
         # if 'signal_level' in data:
@@ -121,81 +124,6 @@ class Planer:
         __self__.antenna_signal_map = __self__.antenna_signal_analyzer.analyze(signals, __self__.signal_radius)
         log(f'Antenna signal map computed with shape {__self__.antenna_signal_map.shape}')
 
-    def path_planing(__self__,start:tuple[int,int],target:tuple[int,int]) -> tuple[list[tuple[int,int]],int]:
-        return __self__.path_planner.find_path(start, target)
-    def exploration(__self__):
-        fields = {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.field.value)}
-        if len(fields) == 0:
-            return
-        # walls = {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall)}
-        unseen = {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.unknown.value)}
-        targets = set()
-        for u in unseen:
-            for t in DIRS.values():
-                new_target = (u[0]+t[0],u[1]+t[1])
-                if new_target in fields:
-                    targets.add(u)
-        log(f'Number of Targets: {len(targets)}.')
-        targets = sorted(targets,key=lambda x:euclidian_distance(__self__.world.bot_pos,x))
-        __self__.targets[PLAN_UNKNOWN] = targets
-    def gem_selection(__self__):
-        if len(__self__.world.gems_seen) == 0:
-            __self__.targets[PLAN_GEMS] = []
-            return
-        combinations = list(permutations(__self__.world.gems_seen))
-        distance_score = []
-        if len(combinations) < 10: #Actually this is up to 4 gems -> 24 combinations or 3 gems -> 6 combinations, but we want to be safe
-            for i in range(len(combinations)):
-                combo = [__self__.world.bot_pos]
-                combo.extend(combinations[i])
-                distance_score.append(0)
-                for j in range(len(combo)-1):
-                    distance_score[i] += __self__.path_planing(combo[j],combo[j+1])[1]
-                log(f'Combo {combo} has length {distance_score[i]}')
-            min_index = np.argmin(distance_score)
-            __self__.targets[PLAN_GEMS] = combinations[min_index]
-            log(f'Found {len(combinations)} gem combinations')
-        else:
-            log(f'Found {len(combinations)}: to long for computation, select nearest one.')
-            closest = []
-            for k,v in __self__.world.gems_seen.items():
-                _,cost = __self__.path_planing(__self__.world.bot_pos,k)
-                closest.append((v-cost,k))
-            log(f'{closest}')
-            closest.sort(key=lambda x: x[0],reverse=False)
-            closest = [x[1] for x in closest]
-            __self__.targets[PLAN_GEMS] = closest
-            log(f'{closest}')            
-    def antenna_placement(__self__):
-        __self__.next_antenna = None
-        max_placed_antenna = max(__self__.antenna_placed.values())
-        next_antennas = [k for k,v in __self__.antenna_placed.items() if v < max_placed_antenna]
-        antennas_left = __self__.target_antenna_num - sum(__self__.antenna_placed.values())
-        if antennas_left <= 0:
-            log('No antennas left to place.')
-            __self__.targets[PLAN_ANTENNA] = []
-            return
-        if len(next_antennas) == 0:
-            log('All antennas are placed equally, placing next one.')
-            next_antennas = list(__self__.antenna_positions)
-        if len(next_antennas) > antennas_left:
-            log(f'More antennas to place than left, reducing options to {antennas_left}.')
-            next_antennas = next_antennas[:antennas_left]
-        distances = {k:euclidian_distance(__self__.world.bot_pos,__self__.world.antenna_positions[k]) for  k in next_antennas}
-        next_antenna = min(distances,key=distances.get)
-        log(f'Next antenna to place: {next_antenna} at distance {distances[next_antenna]}')
-        __self__.targets[PLAN_ANTENNA] = [__self__.world.antenna_positions[next_antenna]]
-        __self__.next_antenna = next_antenna
-
-    def compute_selection(__self__):
-        i = None
-        for i in range(len(__self__.targets.get(PLAN_COMPUTED,[]))):
-            p,_ = __self__.path_planing(__self__.world.bot_pos,__self__.targets[PLAN_COMPUTED][i])
-            if len(p) > 1:
-                break
-        if i != None:
-            log(f'Removing the first {i} elements.')
-            __self__.targets[PLAN_COMPUTED] = __self__.targets[PLAN_COMPUTED][i:]
     def plan_global(__self__):
         if __self__.current_path and not (__self__.world.world_changed or __self__.targets_changed):
             log('Use existing path')
@@ -221,7 +149,7 @@ class Planer:
             if targets != None:
                 __self__.targets[plan] = targets
             if plan in __self__.targets and len(__self__.targets[plan]) > 0:
-                __self__.current_path,_ = __self__.path_planing(__self__.world.bot_pos,__self__.targets[plan][0])
+                __self__.current_path,_ = __self__.path_planner.find_path(__self__.world.bot_pos,__self__.targets[plan][0])
                 __self__.current_path = __self__.current_path[1:]
                 if len(__self__.current_path) > 0:
                     break
@@ -299,19 +227,16 @@ class Planer:
 
         return grid
     def get_next_move(__self__)->str:
-        if __self__.next_antenna != None and len(__self__.current_path) == 1:
-            log(f'Moving towards antenna {__self__.next_antenna} at position {__self__.world.antenna_positions[__self__.next_antenna]}')
-            direction = (np.sign(__self__.world.antenna_positions[__self__.next_antenna][0]-__self__.world.bot_pos[0]),np.sign(__self__.world.antenna_positions[__self__.next_antenna][1]-__self__.world.bot_pos[1]))
-            log(f'selected direction: {direction}')
-            move = f'PA{DIRS_INV[direction]}'
-            bp = __self__.world.bot_pos 
-            if move != 'PAWAIT':
-                __self__.antenna_placed[__self__.next_antenna] += 1
+        antenna_move = __self__.plan_antenna.get_antenna_move(__self__.world.bot_pos, __self__.current_path)
+        if antenna_move:
+            bp = __self__.world.bot_pos
+            direction = __self__.plan_antenna.get_last_antenna_direction()
+            if direction and antenna_move != 'PAWAIT':
                 nd = DIRS[DIRS_INV[direction]]
                 xxx = (bp[0]+nd[0],bp[1]+nd[1])
                 __self__.world.fields_seen.pop(xxx,None)
                 log(f'bot will move to {xxx}')
-            __self__.next_antenna = None
+            return antenna_move
         elif __self__.current_path:
             log(f'Path length: {len(__self__.current_path)}')
             next_pos = __self__.current_path[0]
@@ -346,26 +271,141 @@ class Planer:
         return maps
 
 class PlanBasic:
-    def __init__(__self__,world:World,path_planner:PathPlannerAStar):
+    def __init__(__self__,world:World,path_planner:PathPlannerAStar,planer=None):
         __self__.world = world
         __self__.path_planner:PathPlannerAStar = path_planner
+        __self__.planer = planer
     def plan(__self__) -> list[tuple[int,int]]:
         raise NotImplementedError()
+
+class PlanComputed(PlanBasic):
+    def plan(__self__):
+        targets = list(__self__.planer.targets.get(PLAN_COMPUTED, []))
+        for index, target in enumerate(targets):
+            path, _ = __self__.path_planner.find_path(__self__.world.bot_pos, target)
+            if len(path) > 1:
+                return targets[index:]
+        return []
+
+class PlanGems(PlanBasic):
+    def plan(__self__):
+        if len(__self__.world.gems_seen) == 0:
+            return []
+
+        combinations = list(permutations(__self__.world.gems_seen))
+        if len(combinations) < 10:
+            distance_score = []
+            for combo in combinations:
+                path_combo = [__self__.world.bot_pos] + list(combo)
+                score = 0
+                for src, dst in zip(path_combo, path_combo[1:]):
+                    score += __self__.path_planner.find_path(src, dst)[1]
+                distance_score.append(score)
+                log(f'Combo {path_combo} has length {score}')
+            min_index = np.argmin(distance_score)
+            return list(combinations[min_index])
+
+        log(f'Found {len(combinations)}: to long for computation, select nearest one.')
+        closest = []
+        for position, value in __self__.world.gems_seen.items():
+            _, cost = __self__.path_planner.find_path(__self__.world.bot_pos, position)
+            closest.append((value - cost, position))
+        closest.sort(key=lambda x: x[0])
+        return [position for _, position in closest]
+
+class PlanUnknown(PlanBasic):
+    def plan(__self__):
+        fields = {(x, y) for x, y in np.argwhere(__self__.world.field == field_type.field.value)}
+        if len(fields) == 0:
+            return []
+
+        unseen = {(x, y) for x, y in np.argwhere(__self__.world.field == field_type.unknown.value)}
+        targets = set()
+        for u in unseen:
+            for t in DIRS.values():
+                new_target = (u[0] + t[0], u[1] + t[1])
+                if new_target in fields:
+                    targets.add(u)
+        log(f'Number of Targets: {len(targets)}.')
+        return sorted(targets, key=lambda x: euclidian_distance(__self__.world.bot_pos, x))
+
+class PlanAntenna(PlanBasic):
+    def __init__(__self__, world: World, path_planner: PathPlannerAStar):
+        __self__.world = world
+        __self__.path_planner = path_planner
+        __self__.antenna_positions = {}
+        __self__.antenna_placed = {}
+        __self__.target_antenna_num = 0
+        __self__.next_antenna = None
+        __self__.last_direction = None
+
+    def update(__self__):
+        __self__.antenna_positions = {NW: (__self__.world.mid_height//2,__self__.world.mid_width//2),
+                                      SE: ((3*__self__.world.mid_height)//2,(3*__self__.world.mid_width)//2),
+                                      NE: (__self__.world.mid_height//2,(3*__self__.world.mid_width)//2),
+                                      SW: ((3*__self__.world.mid_height)//2,__self__.world.mid_width//2)}
+        __self__.antenna_placed = {x: 0 for x in __self__.antenna_positions}
+
+    def set_target_antenna_count(__self__, count: int):
+        __self__.target_antenna_num = count
+
+    def plan(__self__):
+        __self__.next_antenna = None
+        max_placed_antenna = max(__self__.antenna_placed.values())
+        next_antennas = [k for k, v in __self__.antenna_placed.items() if v < max_placed_antenna]
+        antennas_left = __self__.target_antenna_num - sum(__self__.antenna_placed.values())
+        if antennas_left <= 0:
+            log('No antennas left to place.')
+            return []
+        if len(next_antennas) == 0:
+            log('All antennas are placed equally, placing next one.')
+            next_antennas = list(__self__.antenna_positions)
+        if len(next_antennas) > antennas_left:
+            log(f'More antennas to place than left, reducing options to {antennas_left}.')
+            next_antennas = next_antennas[:antennas_left]
+        distances = {k: euclidian_distance(__self__.world.bot_pos, __self__.antenna_positions[k]) for k in next_antennas}
+        next_antenna = min(distances, key=distances.get)
+        log(f'Next antenna to place: {next_antenna} at distance {distances[next_antenna]}')
+        __self__.next_antenna = next_antenna
+        return [__self__.antenna_positions[next_antenna]]
+
+    def get_antenna_move(__self__, bot_pos: tuple[int, int], current_path: list) -> str:
+        if __self__.next_antenna is None or len(current_path) != 1:
+            return None
+        log(f'Moving towards antenna {__self__.next_antenna} at position {__self__.antenna_positions[__self__.next_antenna]}')
+        direction = (np.sign(__self__.antenna_positions[__self__.next_antenna][0] - bot_pos[0]),
+                    np.sign(__self__.antenna_positions[__self__.next_antenna][1] - bot_pos[1]))
+        log(f'selected direction: {direction}')
+        __self__.last_direction = direction
+        move = f'PA{DIRS_INV[direction]}'
+        if move != 'PAWAIT':
+            __self__.antenna_placed[__self__.next_antenna] += 1
+        __self__.next_antenna = None
+        return move
+
+    def get_last_antenna_direction(__self__):
+        return __self__.last_direction
+
+class PlanNotImplemented(PlanBasic):
+    def plan(__self__):
+        log('This plan is not implemented yet')
+        return []
+
 class PlanPatrol(PlanBasic):
     def plan(__self__):
         '''
             This selects the next position to see a field, that is not for longest time.
         '''
         max_not_seen_value = max(__self__.world.fields_seen.values())
-        relevant_fields = {k for k,v in __self__.world.fields_seen.items() if v == max_not_seen_value}
+        relevant_fields = {k for k, v in __self__.world.fields_seen.items() if v == max_not_seen_value}
         log(f'Patrol Relevant Targets: {relevant_fields}')
-        possible_targets = {k for k,v in __self__.world.visible_fields.items() if len(relevant_fields.intersection(v)) > 0}
+        possible_targets = {k for k, v in __self__.world.visible_fields.items() if len(relevant_fields.intersection(v)) > 0}
         log(f'Patrol Possible Targets: {possible_targets}')
-        possible_targets = sorted(possible_targets,key= lambda x:euclidian_distance(__self__.world.bot_pos,x))
+        possible_targets = sorted(possible_targets, key=lambda x: euclidian_distance(__self__.world.bot_pos, x))
         if len(possible_targets) > MAX_PATROL_TARGET:
             log(f'Reducing possible targets to {MAX_PATROL_TARGET}')
             possible_targets = possible_targets[:MAX_PATROL_TARGET]
-        target_values =  {k:__self__.path_planner.find_path(__self__.world.bot_pos,k)[1] for k in possible_targets}
-        targets = list(k for k,v in sorted(target_values.items(),key=lambda item:item[1]))
+        target_values = {k: __self__.path_planner.find_path(__self__.world.bot_pos, k)[1] for k in possible_targets}
+        targets = [k for k, v in sorted(target_values.items(), key=lambda item: item[1])]
         log(f'Patrol Fields: {targets}')
         return targets

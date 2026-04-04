@@ -32,14 +32,15 @@ class signal_bot:
             __self__.select_move()
 
     def analyse_first_tick(__self__,data):
-        log('First Tick',log_level.DEBUG)
+        log('First Tick',log_level.INFO)
         __self__.first_tick = False
         __self__.world.update_config(width=data['config']['width'],height = data['config']['height'])
+        __self__.planer.update()
         __self__.planer.signal_radius  = data['config']["signal_radius"]
         __self__.planer.max_antenna = data['config'].get("max_antennas",-1)
         __self__.planer.set_antenna = 0
-        __self__.planer.target_antenna_num = min(2,__self__.planer.max_antenna) 
-        log(f'Setting target antenna num to {__self__.planer.target_antenna_num}')
+        __self__.planer.plan_antenna.target_antenna_num = min(2,__self__.planer.max_antenna) #really bad style
+        log(f'Setting target antenna num to {__self__.planer.plan_antenna.target_antenna_num}')
 
     def select_move(__self__):
         move = __self__.planer.get_next_move()

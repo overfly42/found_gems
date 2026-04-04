@@ -66,10 +66,6 @@ class World:
         __self__.mid_width = width//2
         __self__.mid_height = height//2
         __self__.world_changed = True
-        __self__.antenna_positions = {NW: (__self__.mid_height//2,__self__.mid_width//2),
-                                      SE: ((3*__self__.mid_height)//2,(3*__self__.mid_width)//2),
-                                      NE: (__self__.mid_height//2,(3*__self__.mid_width)//2),
-                                      SW: ((3*__self__.mid_height)//2,__self__.mid_width//2)}
     def update_walls(__self__,data:list):
         value_before = np.sum(data)
         for wall in data:
