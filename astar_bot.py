@@ -133,18 +133,209 @@ class World:
             log('Changing world (new Gems).')
         log(f'There are currently {len(__self__.gems_seen)} Gems in the list')
 
+class PathPlanner:
+    def __init__(self, world: World):
+        self.world = world
+
+    def find_path(self, start: tuple[int, int], target: tuple[int, int]) -> tuple[list[tuple[int, int]], int]:
+        f = self.world.field
+        q = deque()
+        q.append((0, start))
+        current_path = {}
+        score = defaultdict(lambda: float('inf'))
+        score[start] = 0
+
+        while q:
+            _, current = q.popleft()
+            if target == current:
+                break
+            for dx, dy in DIRS.values():
+                nxt = (current[0] + dx, current[1] + dy)
+                if nxt == target:
+                    current_path[nxt] = current
+                    q.clear()
+                    q.append((0, nxt))
+                    break
+                x, y = nxt
+                if x < 0 or x >= self.world.height or y < 0 or y >= self.world.width:
+                    continue
+                if f[x, y] == field_type.wall.value:
+                    continue
+                tentative_score = score[current] + f[x, y]
+                if tentative_score < score[nxt]:
+                    current_path[nxt] = current
+                    score[nxt] = tentative_score
+                    q.append((tentative_score, nxt))
+
+        if target not in current_path:
+            return [], float('inf')
+
+        actual_path = [target]
+        while target in current_path:
+            target = current_path[target]
+            actual_path.append(target)
+        actual_path.reverse()
+        final_score = max([v for k, v in score.items() if k in actual_path])
+        return actual_path, final_score
+
+class BaseSignalAnalyzer:
+    def __init__(self, world: World):
+        self.world = world
+
+    def signal_level_to_distance(self, signal_level: float, signal_radius: float) -> float:
+        if signal_level > 1:
+            log(f'Signal level {signal_level} greater than 1, using maximum signal')
+            signal_level = 1.0
+        if signal_level <= 0:
+            log(f'Signal level is 0, returning inf distance', log_level.INFO)
+            return float('inf')
+        return signal_radius * ((1 - signal_level) / signal_level) ** 0.5
+
+    def gaussian_distance_ring(self, robot_pos, target_distance, sigma, amplitude=1.0) -> np.ndarray:
+        rows = self.world.height
+        cols = self.world.width
+        ry, rx = robot_pos
+        y, x = np.ogrid[:rows, :cols]
+        dist = np.sqrt((x - rx) ** 2 + (y - ry) ** 2)
+        return amplitude * np.exp(-(dist - target_distance) ** 2 / (2 * sigma ** 2))
+
+    def normalize(self, matrix: np.ndarray) -> np.ndarray:
+        max_val = np.max(matrix)
+        if max_val == 0 or np.isnan(max_val):
+            return np.zeros_like(matrix)
+        return matrix / max_val
+
+class GlobalSignalAnalyzer(BaseSignalAnalyzer):
+    def __init__(self, world: World):
+        super().__init__(world)
+        self.signal_map = np.zeros_like(world.field, np.float64)
+        self.first_signal = True
+
+    def analyze(self, signal_level: float, signal_radius: float) -> list[tuple[int, int]]:
+        if signal_level <= 0:
+            log('Discarding Global Signal analysis.')
+            return []
+        distances = [self.signal_level_to_distance(signal_level, signal_radius) / x for x in GAUS_RING_INTERVALS]
+        signal_map = np.zeros_like(self.world.field, np.float64)
+        for d in distances:
+            signal_map += self.gaussian_distance_ring(self.world.bot_pos, d, sigma=SIGMA)
+        signal_map = self.normalize(signal_map)
+
+        if self.first_signal:
+            self.signal_map = signal_map
+            self.first_signal = False
+        else:
+            self.signal_map = SIGNAL_MAP_DECAY * self.signal_map + (1.0 - SIGNAL_MAP_DECAY) * signal_map
+        self.signal_map = self.normalize(self.signal_map)
+        self.signal_map[self.signal_map < SIGNAL_THRESHHOLD] = 0
+
+        computed = {(x, y) for x, y in np.argwhere(self.signal_map > COPUTE_THREASHOLD)}
+        computed.difference_update({(x, y) for x, y in np.argwhere(self.world.field == field_type.wall.value)})
+        computed.difference_update(set(self.world.visible_fields.get(self.world.bot_pos, [])))
+        return sorted(computed, key=lambda pos: euclidian_distance(pos, self.world.bot_pos))
+
+class ChannelSignalAnalyzer(BaseSignalAnalyzer):
+    def __init__(self, world: World):
+        super().__init__(world)
+        self.signal_memory: list[dict] = []
+
+    def new_tick(self):
+        self.signal_memory.append({})
+
+    def analyze(self, signals: list[float], signal_radius: float) -> list[tuple[int, int]]:
+        log('Starting channel signal analysis')
+        if not isinstance(signals, list):
+            log(f'Cannot analyze channel signal of type {type(signals)}')
+            return []
+
+        prev_mem = None if len(self.signal_memory) < 2 else self.signal_memory[-2]
+        cur_mem = self.signal_memory[-1]
+        cur_mem['channels'] = signals
+        cur_mem['distribution'] = []
+        cur_mem['distances'] = []
+        cur_mem['targets'] = []
+
+        for i, signal_level in enumerate(signals):
+            last_signal_distribution = np.zeros_like(self.world.field, np.float64)
+            if prev_mem is not None:
+                last_signal_distribution = prev_mem['distribution'][i]
+            if signal_level > 0:
+                log(f'Channel {i} has signal strength {signal_level}')
+            if signal_level <= 0:
+                distance = float('inf')
+                signal_distribution = np.zeros_like(self.world.field, np.float64)
+            else:
+                distance = self.signal_level_to_distance(signal_level, signal_radius)
+                signal_distribution = self.gaussian_distance_ring(self.world.bot_pos, distance, sigma=SIGMA)
+            cur_mem['distances'].append(distance)
+            signal_distribution = SIGNAL_MAP_DECAY * last_signal_distribution + (1.0 - SIGNAL_MAP_DECAY) * signal_distribution
+            signal_distribution = self.normalize(signal_distribution)
+            cur_mem['distribution'].append(signal_distribution)
+            max_val = np.max(signal_distribution)
+            cur_mem['targets'].append({(x, y) for x, y in np.argwhere(signal_distribution > max_val * COPUTE_THREASHOLD)})
+
+        statistics: dict[tuple[int, int], int] = {}
+        for targets in cur_mem['targets']:
+            for t in targets:
+                statistics[t] = statistics.get(t, 0) + 1
+
+        max_value = max(statistics.values()) if statistics else 1
+        min_distance_index = np.argmin(cur_mem['distances']) if cur_mem['distances'] else 0
+        computed = set(cur_mem['targets'][min_distance_index]) if cur_mem['targets'] else set()
+        if max_value > 1:
+            computed.update({k for k, v in statistics.items() if v == max_value})
+            log('Using multiple channels for targets')
+
+        walls = {(x, y) for x, y in np.argwhere(self.world.field == field_type.wall.value)}
+        visible = set(self.world.visible_fields.get(self.world.bot_pos, []))
+        computed.difference_update(walls)
+        computed.difference_update(visible)
+        return sorted(computed, key=lambda pos: euclidian_distance(pos, self.world.bot_pos))
+
+class AntennaSignalAnalyzer(BaseSignalAnalyzer):
+    def analyze(self, signals: list[dict], signal_radius: float) -> np.ndarray:
+        log('Starting antenna signal analysis')
+        rows = self.world.height
+        cols = self.world.width
+        EPS = 1.0
+        map_sum = np.zeros_like(self.world.field, np.int32)
+
+        for s in signals:
+            position = tuple(s.get('position'))
+            signal_level = s.get('signal')
+            if signal_level is None or signal_level <= 0:
+                continue
+            distance = self.signal_level_to_distance(signal_level, signal_radius)
+            y, x = np.ogrid[:rows, :cols]
+            dist = np.sqrt((x - position[0]) ** 2 + (y - position[1]) ** 2)
+            ring_map = ((dist >= distance - EPS) & (dist <= distance + EPS)).astype(int)
+            map_sum += ring_map
+        return map_sum
+
 class Planer:
     def __init__(__self__,world:World):
         __self__.world = world
         __self__.targets_changed = True
         __self__.first_signal = True
         __self__.signal_radius = 0.0
-        __self__.targets = {}
+        __self__.targets = {
+            PLAN_COMPUTED: [],
+            PLAN_GEMS: [],
+            PLAN_OPPONENTS: [],
+            PLAN_PATROL: [],
+            PLAN_SIGNAL: [],
+            PLAN_UNKNOWN: [],
+            PLAN_ANTENNA: []
+        }
         __self__.computed_not_in_counter = 0
         __self__.gems_computed:set[tuple[int,int]] = set()
         __self__.singal_memory = []
         __self__.current_path:list[tuple[int,int]] = []
         __self__.signal_map = np.zeros_like(__self__.world.field)
+        __self__.path_planner = PathPlanner(__self__.world)
+        __self__.global_signal_analyzer = GlobalSignalAnalyzer(__self__.world)
+        __self__.channel_signal_analyzer = ChannelSignalAnalyzer(__self__.world)
+        __self__.antenna_signal_analyzer = AntennaSignalAnalyzer(__self__.world)
         __self__.planing_actions = {
             PLAN_COMPUTED:__self__.compute_selection,
             PLAN_GEMS:__self__.gem_selection,
@@ -159,60 +350,26 @@ class Planer:
         __self__.target_antenna_num = 0
     def new_tick(__self__):
         __self__.singal_memory.append({})
+        __self__.channel_signal_analyzer.new_tick()
     def not_implemented_yet(__self__):
         log('This Plan is not implemented yet')
+
+    def analyse_global_signal(__self__, signal_level: float):
+        __self__.targets[PLAN_COMPUTED] = __self__.global_signal_analyzer.analyze(signal_level, __self__.signal_radius)
+        if __self__.targets[PLAN_COMPUTED]:
+            __self__.targets_changed = True
+
+    def analyse_channel_signal(__self__, signals: list[float]):
+        __self__.targets[PLAN_COMPUTED] = __self__.channel_signal_analyzer.analyze(signals, __self__.signal_radius)
+        if __self__.targets[PLAN_COMPUTED]:
+            __self__.targets_changed = True
+
+    def analyse_antenna_signal(__self__, signals: list[dict]):
+        __self__.antenna_signal_map = __self__.antenna_signal_analyzer.analyze(signals, __self__.signal_radius)
+        log(f'Antenna signal map computed with shape {__self__.antenna_signal_map.shape}')
+
     def path_planing(__self__,start:tuple[int,int],target:tuple[int,int]) -> tuple[list[tuple[int,int]],int]:
-        '''
-        This uses the dijkstra algorithm to find the shortest path to a given target
-        
-        :param __self__: Planer instance
-        :param startDescription: Poistion to start for search, usually the positon of a bot
-        :type start: tuple[int, int]
-        :param target: Position of the target, am empty field or gem
-        :type target: tuple[int, int]
-        :return: List of Fields to touch in row to reach to goal, as well as the costs to reach it
-        :rtype: tuple[list[tuple[int, int]], int]
-        '''
-        f = __self__.world.field
-        q = deque()
-        q.append((0,start))
-        current_path = {}
-        score = defaultdict(lambda:float('inf'))
-        score[start] = 0
-        while q:
-            dist,current = q.popleft()
-            if target == current:
-                break#found destination
-            for dx,dy in DIRS.values():
-                next = (current[0]+dx,current[1]+dy)
-                if next == target:
-                    current_path[next] = current
-                    q.clear()
-                    q.append((0,next))
-                    break
-                x = next[0]
-                y = next[1]
-                # bounds check
-                if x < 0 or x >= __self__.world.height or y < 0 or y >= __self__.world.width:
-                    continue
-                # skip walls
-                if f[x,y] == field_type.wall.value:
-                    continue
-                tentative_score = score[current]+f[x,y]#sums current costs and cost for next field
-                if tentative_score < score[next]:
-                    current_path[next] = current
-                    score[next] = tentative_score
-                    q.append((tentative_score,next))
-        #create the path from the end to start:
-        if target not in current_path:
-            return [], np.inf# No path found
-        actual_path = [target]
-        while target in current_path:
-            target = current_path[target]
-            actual_path.append(target)
-        actual_path.reverse()
-        final_score = max([v for k,v in score.items() if k in actual_path])
-        return actual_path, final_score
+        return __self__.path_planner.find_path(start, target)
     def exploration(__self__):
         fields = {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.field.value)}
         if len(fields) == 0:
@@ -330,149 +487,20 @@ class Planer:
                 if len(__self__.current_path) > 0:
                     break
     def analyse_multi_signal(__self__,signals:list):
-        log('Starting multi channel singal analysis')
-        if not isinstance(signals,list):
-            log(f'Could not handle singal of type {type(signals)}, clean up and skip calculation')
-            __self__.signal_map *= 0.0
-            __self__.targets.get(PLAN_COMPUTED,[]).clear()
-            return
-        #Compute distances and distributions for each channel
-        prev_mem = None if len(__self__.singal_memory) < 2 else __self__.singal_memory[-2]
-        cur_mem = __self__.singal_memory[-1]
-        cur_mem['channels'] = signals
-        cur_mem['distribution'] = []
-        cur_mem['distances'] = []
-        cur_mem['targets'] = []
-        for i in range(len(signals)):
-            last_signal_distribution = np.zeros_like(__self__.world.field,np.float64) if prev_mem == None else prev_mem['distribution'][i]
-            if signals[i] <= 0:
-                last_signal_distribution = np.zeros_like(__self__.world.field,np.float64)
-            else:
-                log(f'Channel {i} has signal strength {signals[i]}')
-            cur_mem['distances'].append(__self__.signal_level_to_distance(signals[i]))
-            signal_distribution = __self__.gaussian_distance_ring(__self__.world.bot_pos,cur_mem['distances'][-1],sigma=SIGMA)
-            signal_distribution = SIGNAL_MAP_DECAY * last_signal_distribution + (1.0-SIGNAL_MAP_DECAY)*signal_distribution
-            signal_distribution /= np.max(signal_distribution)
-            signal_distribution = np.nan_to_num(signal_distribution,nan=0.0)
-            cur_mem['distribution'].append(signal_distribution)
-            max_val = np.max(signal_distribution)
-            cur_mem['targets'].append({(x,y) for  x,y in np.argwhere(signal_distribution>max_val*COPUTE_THREASHOLD)})
-            folder_path = f'data/{i}/'
-            if os.path.exists(folder_path):
-                np.savetxt(f'{folder_path}{len(__self__.singal_memory):04d}.csv',signal_distribution)
-        statistics ={}
-        for targets in cur_mem['targets']:
-            for t in targets:
-                statistics[t] = statistics.get(t,0) + 1
-        if len(statistics) > 0:
-            max_value = max(statistics.values())
-        else:
-            max_value = 1
-        cur_mem['min_distance_index'] = np.argmin(cur_mem['distances'])
-#Variante 1: Entweder single best, oder nur gruppen
-#         if max_value <= 1:
-# #            min_dist_gem = cur_mem['distribution'][cur_mem['min_distance_index']]
-#             __self__.gems_computed = cur_mem['targets'][cur_mem['min_distance_index']]
-#             log ('Using single signal for target')
-#         else:
-#             __self__.gems_computed = {k for k,v in statistics.items() if v == max_value}            
-#             log ('Using multiple signales for targets')
-        __self__.gems_computed = set(cur_mem['targets'][cur_mem['min_distance_index']])
-        if max_value > 1:
-            __self__.gems_computed.update({k for k,v in statistics.items() if v == max_value})            
-            log ('Using multiple signales for targets')
-        if __self__.gems_computed == None or len(__self__.gems_computed) == 0:
-            return
-        __self__.targets[PLAN_COMPUTED] = list(sorted(__self__.gems_computed,key=lambda x: euclidian_distance(x,__self__.world.bot_pos)))
-        if prev_mem != None and cur_mem['min_distance_index'] != prev_mem['min_distance_index']:
-            log('Distance index has changed, need to recompute path.')
-            __self__.targets_changed = True
-            log(f'New computed area has {len(__self__.targets.get(PLAN_COMPUTED,[]))} potential gems.')
-        else:
-            log('Check if current path is within targets.')
-            num_overlaps = set(__self__.current_path).intersection(set(__self__.targets.get(PLAN_COMPUTED,[])))
-            if len(num_overlaps) == 0:
-                log('Current path is not within targets, need to recompute path.')
-                __self__.targets_changed = True    
-        walls = {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)}
-        visible = set(__self__.world.visible_fields[__self__.world.bot_pos])
-        __self__.targets[PLAN_COMPUTED] = [t for t in __self__.targets.get(PLAN_COMPUTED,[]) if t not in walls and t not in visible]
+        __self__.analyse_channel_signal(signals)
     def analyse_antenna_signal(__self__,signals:list):
-        log('Starting antenna signal analysis')
-        signals = [{'pos':tuple(x.get('position')),'level':x.get('signal')} for x in signals]
-        rows = __self__.world.height
-        cols = __self__.world.width
-        tick = len(__self__.singal_memory)
-        s_id = 0
-        store_data = os.path.exists('data')
-        EPS = 1.0
-        map_sum = np.zeros_like(__self__.world.field,np.int32)
-        for s in signals:
-            s_id = s_id + 1
-            rx,ry = s['pos']
-            s['distance'] = __self__.signal_level_to_distance(s['level'])
-            # Coordinate grid
-            y, x = np.ogrid[:rows, :cols]       
-            # Distance from robot
-            dist = np.sqrt((x - rx)**2 + (y - ry)**2)            
-            # Create a map where only elements within +/- EPS of s['distance'] are set to 1
-            ring_map = ((dist >= s['distance'] - EPS) & (dist <= s['distance'] + EPS)).astype(int)
-            map_sum += ring_map
-            if store_data:
-                os.makedirs(f'data/{s_id}', exist_ok=True)
-                np.savetxt(f'data/{s_id}/antenna_{tick:04d}.csv',ring_map)
-        if store_data:
-            np.savetxt(f'data/antenna_sum_{tick:04d}.csv',map_sum)
+        __self__.antenna_signal_map = __self__.antenna_signal_analyzer.analyze(signals, __self__.signal_radius)
+        log(f'Antenna signal map computed with shape {__self__.antenna_signal_map.shape}')
                     
     def analyse_signal(__self__,singal_strength:float|list[float]):
         if isinstance(singal_strength,float):
-            if singal_strength <= 0:
-                log('Discarding Singal analysis.')
-                return
-            log('Starting Global Singal analysis.')
-            base_distance = __self__.signal_level_to_distance(singal_strength) 
-            distances = [(1.0/x) * base_distance for x in GAUS_RING_INTERVALS]
+            __self__.analyse_global_signal(singal_strength)
         elif isinstance(singal_strength,list):
-            log('Starting channel singal analysis')
-            distances = [__self__.signal_level_to_distance(x) for x in singal_strength if x > 0]
+            __self__.analyse_channel_signal(singal_strength)
         else:
             log(f'Could not handle singal of type {type(singal_strength)}, clean up and skip calculation')
-            __self__.signal_map *= 0.0
-            __self__.targets.get(PLAN_COMPUTED,[]).clear()
+            __self__.targets[PLAN_COMPUTED] = []
             __self__.first_signal = True
-            return
-        np.nan_to_num(__self__.signal_map,copy=False,nan=0.0)
-        if len(__self__.targets.get(PLAN_COMPUTED,[])) < len(distances):
-            __self__.first_signal = True
-        signal_map = np.zeros_like(__self__.world.field,np.float64)
-        for d in distances:
-            signal_map += __self__.gaussian_distance_ring(__self__.world.bot_pos,d,sigma=SIGMA)
-        signal_map /= np.max(signal_map)
-        if __self__.first_signal:
-            __self__.first_signal = False
-            __self__.signal_map = signal_map
-        else:
-            __self__.signal_map = SIGNAL_MAP_DECAY * __self__.signal_map + (1.0-SIGNAL_MAP_DECAY)*signal_map
-        __self__.signal_map/=np.max(__self__.signal_map)
-        __self__.signal_map[__self__.signal_map < SIGNAL_THRESHHOLD] = 0
-        log(f'Max value on singal map: {np.max(__self__.signal_map)}')
-        folder = 'data'
-        if os.path.exists(folder) and LOG_LEVEL.value < log_level.GAME.value:
-            np.savetxt(f'{folder}/{len(os.listdir(folder)):04d}.csv',__self__.signal_map)
-        elif os.path.exists(folder):
-            log(f'Files in {folder}: {len(os.listdir(folder))}')
-        __self__.gems_computed = {(x,y) for  x,y in np.argwhere(__self__.signal_map>COPUTE_THREASHOLD)}
-        __self__.gems_computed.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
-        __self__.gems_computed.difference_update(set(__self__.world.visible_fields[__self__.world.bot_pos]))
-        # __self__.singal_memory.append(gems_computed)
-        # if len(__self__.gems_computed) == 0:
-        #     __self__.signal_map = np.zeros_like(__self__.signal_map)
-        # #Clean up already computed gems
-        # if PLAN_COMPUTED in __self__.targets:
-        #     l = set(__self__.targets[PLAN_COMPUTED])
-        #     l.difference_update(__self__.world.visible_fields[__self__.world.bot_pos])
-        #     l.difference_update({(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)})
-        __self__.targets[PLAN_COMPUTED] = list(sorted(__self__.gems_computed,key=lambda x: euclidian_distance(x,__self__.world.bot_pos)))
     def signal_level_to_distance(__self__,signal_level:float)->float:
         # Distance formula
         # s = 1 / (1 + (d/r)²)
@@ -554,12 +582,13 @@ class signal_bot:
         __self__.world.update_walls(data.get("wall",[]))
         __self__.world.update_floor(data.get("floor",[]))
         __self__.world.update_gems(data.get('visible_gems',[]))
-        # __self__.planer.analyse_signal(data.get('signal_level',0))
-        #__self__.planer.analyse_signal(data.get('channels',data.get('singal_level',0)))
+
+        if 'signal_level' in data:
+            __self__.planer.analyse_global_signal(data.get('signal_level', 0.0))
         if 'channels' in data:
-            __self__.planer.analyse_multi_signal(data.get('channels',[]))
+            __self__.planer.analyse_channel_signal(data.get('channels', []))
         elif 'antenna_signals' in data:
-            __self__.planer.analyse_antenna_signal(data.get('antenna_signals',[]))
+            __self__.planer.analyse_antenna_signal(data.get('antenna_signals', []))
     def analyse_first_tick(__self__,data):
         log('First Tick',log_level.DEBUG)
         __self__.first_tick = False
