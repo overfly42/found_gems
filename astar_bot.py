@@ -83,6 +83,7 @@ class World:
         __self__.visible_fields:dict[tuple[int,int]:set[tuple[int,int]]] = {}#Dict for position to view other positions
         __self__.gems_seen = {}
         __self__.fields_seen = {}
+        __self__.history = []
     def update_config(__self__,width:int,height:int):
         __self__.field = np.ones((height,width),dtype=np.int16)
         __self__.field *= field_type.unknown.value
@@ -396,9 +397,33 @@ class Planer:
         walls = {(x,y) for x,y in np.argwhere(__self__.world.field == field_type.wall.value)}
         visible = set(__self__.world.visible_fields[__self__.world.bot_pos])
         __self__.targets[PLAN_COMPUTED] = [t for t in __self__.targets.get(PLAN_COMPUTED,[]) if t not in walls and t not in visible]
-
-                       
-
+    def analyse_antenna_signal(__self__,signals:list):
+        log('Starting antenna signal analysis')
+        signals = [{'pos':tuple(x.get('position')),'level':x.get('signal')} for x in signals]
+        rows = __self__.world.height
+        cols = __self__.world.width
+        tick = len(__self__.singal_memory)
+        s_id = 0
+        store_data = os.path.exists('data')
+        EPS = 1.0
+        map_sum = np.zeros_like(__self__.world.field,np.int32)
+        for s in signals:
+            s_id = s_id + 1
+            rx,ry = s['pos']
+            s['distance'] = __self__.signal_level_to_distance(s['level'])
+            # Coordinate grid
+            y, x = np.ogrid[:rows, :cols]       
+            # Distance from robot
+            dist = np.sqrt((x - rx)**2 + (y - ry)**2)            
+            # Create a map where only elements within +/- EPS of s['distance'] are set to 1
+            ring_map = ((dist >= s['distance'] - EPS) & (dist <= s['distance'] + EPS)).astype(int)
+            map_sum += ring_map
+            if store_data:
+                os.makedirs(f'data/{s_id}', exist_ok=True)
+                np.savetxt(f'data/{s_id}/antenna_{tick:04d}.csv',ring_map)
+        if store_data:
+            np.savetxt(f'data/antenna_sum_{tick:04d}.csv',map_sum)
+                    
     def analyse_signal(__self__,singal_strength:float|list[float]):
         if isinstance(singal_strength,float):
             if singal_strength <= 0:
@@ -521,6 +546,7 @@ class signal_bot:
     def analyse(__self__,data:dict):
         # with open('file.json','w') as f:
         #     json.dump(data,f)
+        __self__.world.history.append(data)
         __self__.world.world_changed = False
         if __self__.first_tick:
             __self__.analyse_first_tick(data)
@@ -532,8 +558,8 @@ class signal_bot:
         #__self__.planer.analyse_signal(data.get('channels',data.get('singal_level',0)))
         if 'channels' in data:
             __self__.planer.analyse_multi_signal(data.get('channels',[]))
-        elif 'antenna_singals' in data:
-            __self__.planer.analyse_antenna_signal(data.get('antenna_singals',[]))
+        elif 'antenna_signals' in data:
+            __self__.planer.analyse_antenna_signal(data.get('antenna_signals',[]))
     def analyse_first_tick(__self__,data):
         log('First Tick',log_level.DEBUG)
         __self__.first_tick = False
