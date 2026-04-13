@@ -1,3 +1,5 @@
+import random
+random.seed(42)
 
 from world import *
 from common import *
@@ -15,7 +17,13 @@ class BaseSignalAnalyzer:
             log(f'Signal level is 0, returning inf distance', log_level.INFO)
             return float('inf')
         return signal_radius * ((1 - signal_level) / signal_level) ** 0.5
-
+    def signal_distance_to_signal_level(self, distance: float) -> float:
+        # Distance formula
+        # s = 1 / (1 + (d/r)²)
+        # With d = distance, r = self.signal_radius, s = signal_level
+        signal_level = 1 / (1 + (distance/self.world.signal_radius)**2)
+        signal_level = np.round(signal_level,6)
+        return signal_level
     def gaussian_distance_ring(self, robot_pos, target_distance, sigma, amplitude=1.0) -> np.ndarray:
         rows = self.world.height
         cols = self.world.width
@@ -181,3 +189,86 @@ class AntennaSignalAnalyzer(BaseSignalAnalyzer):
             map = 1.0 / (1.0 + (map / float(self.world.signal_radius))**2)
             return map
 
+class MultiSourceAnalyzer(BaseSignalAnalyzer):
+    DATA_KEY_ANTENNA = 'antenna_signals'
+    DATA_KEY_GLOBAL = 'signal_level'
+    DIST_EPS = 0.5
+    SIGNAL_EPS = 0.01
+    def __init__(self, world: World):
+        super().__init__(world)
+        self.dist_cache: dict[tuple[int, int], np.ndarray] = {}
+        self.sig_cache: dict[tuple[int, int], np.ndarray] = {}
+
+    def analyze(self, data:dict) -> list[tuple[int, int]]:
+        max_gems = self.world.max_gems
+        antenna_signals = data[self.DATA_KEY_ANTENNA]
+        global_signal_level = data[self.DATA_KEY_GLOBAL]
+        signals = []
+        for x in antenna_signals:
+            signals.append({'position':tuple(x['position']), 'signal':x['signal']})
+        for x in signals:
+            x['position'] = tuple([x['position'][1],x['position'][0]]) #switch x and y to match our coordinate system
+        signals.append({'position':self.world.bot_pos, 'signal':global_signal_level})
+        for x in signals:
+            if x['position'] not in self.dist_cache:
+                self.dist_cache[x['position']] = self.__build_distance_map(x['position'])
+            x['dist_map'] = self.dist_cache[x['position']]
+            x['signal_dist'] = self.signal_level_to_distance(x['signal'], self.world.signal_radius)
+            if x['position'] not in self.sig_cache:
+                self.sig_cache[x['position']] = 1.0 / (1.0 + (x['dist_map'] / float(self.world.signal_radius))**2)
+            x['sig_map'] = self.sig_cache[x['position']]
+        mask = np.ones_like(self.world.field, dtype=bool)
+        #Mask all walls with 0
+        mask[self.world.field == field_type.wall.value] = False
+        #Mask all visible fields with 0
+        visible = set(self.world.visible_fields.get(self.world.bot_pos, []))
+        for v in visible:
+            mask[v] = False
+        for x in signals:
+            mask[x['dist_map'] < x['signal_dist']-self.DIST_EPS] = False
+        gem_masks = {1:{'mask':mask.copy()}}
+        #First, check if one gem matches the signal perfectly, if so, return it immediately
+        for x in signals:
+            gem_masks[1]['mask'][x['dist_map'] > x['signal_dist']+self.DIST_EPS] = False
+        base_coords = [tuple(x) for x in np.argwhere(gem_masks[1]['mask'])]
+        #Select a gem randomly, and assume there is one more
+        coords = [tuple(x) for x in np.argwhere(mask)]
+        if coords:
+            for i in range(15):
+                random_gem = random.choice(coords)
+                random_mask = np.ones_like(mask, dtype=bool)
+                for s in signals:
+                    dist = euclidian_distance(random_gem, s['position'])
+                    signal_value = self.signal_distance_to_signal_level(dist)
+                    signal_rest = s['signal'] - signal_value
+                    random_mask[s['sig_map']-(signal_rest-self.SIGNAL_EPS)<0.0] = False
+                    random_mask[s['sig_map']-(signal_rest+self.SIGNAL_EPS)>0.0] = False
+                coords_new = [tuple(x) for x in np.argwhere(random_mask)]
+                if len(coords_new) == 0 or len(coords_new) > 10:
+                    continue
+                coords_new.append(random_gem)
+                log(f'Gem at {random_gem} with signal value {signal_value} and dist {dist}: {len(coords_new)} positions')
+                base_coords.extend(coords_new)
+        
+        for k, v in gem_masks.items():
+            v['count'] = np.sum(v['mask'])
+            log(f'Gem mask for {k} gems has {v["count"]} potential positions')
+        #####################################################
+        # #Get all coordinates of the remaining fields
+        # coords = [tuple(x) for x in np.argwhere(mask)]
+        # log(f'Found {len(coords)} potential positions from multi-source signal analysis')
+        new_coords = set()
+        for x in base_coords:
+            for _,d in DIRS.items():
+                neighbor = (x[0]+d[0], x[1]+d[1])
+                if neighbor in coords:
+                    new_coords.add(neighbor)
+                new_coords.add(x)
+        return list(new_coords)
+    def __build_distance_map(self,pos:tuple[int, int])->np.ndarray:
+            x0 = pos[1]
+            y0 = pos[0]
+            x = np.arange(self.world.width)
+            y = np.arange(self.world.height)[:,None]
+            map = np.sqrt(np.abs(x - x0)**2 + np.abs(y - y0)**2)
+            return map    
