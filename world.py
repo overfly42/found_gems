@@ -58,6 +58,7 @@ class World:
         __self__.gems_seen = {}
         __self__.fields_seen = {}
         __self__.history = []
+        __self__.signal_radius = 1.0
     def update_config(__self__,width:int,height:int):
         __self__.field = np.ones((height,width),dtype=np.int16)
         __self__.field *= field_type.unknown.value

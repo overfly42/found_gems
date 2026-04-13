@@ -81,9 +81,7 @@ class Planer:
         __self__.plan_antenna = PlanAntenna(world, __self__.path_planner)
         __self__.plan_patrol = PlanPatrol(world, __self__.path_planner, __self__)
         __self__.plan_not_implemented = PlanNotImplemented(world, __self__.path_planner, __self__)
-        __self__.global_signal_analyzer = GlobalSignalAnalyzer(__self__.world)
-        __self__.channel_signal_analyzer = ChannelSignalAnalyzer(__self__.world)
-        __self__.antenna_signal_analyzer = AntennaSignalAnalyzer(__self__.world)
+        __self__.analyzer = AntennaSignalAnalyzer(__self__.world)        
         __self__.planing_actions = {
             PLAN_COMPUTED: __self__.plan_computed.plan,
             PLAN_GEMS: __self__.plan_gems.plan,
@@ -95,34 +93,16 @@ class Planer:
         }
     def new_tick(__self__):
         __self__.singal_memory.append({})
-        __self__.channel_signal_analyzer.new_tick()
+        __self__.analyzer.new_tick()
     def update(__self__):
         __self__.plan_antenna.update()
     def analyse(__self__,data:dict):
         __self__.new_tick()
-        # if 'signal_level' in data:
-        #     __self__.analyse_global_signal(data.get('signal_level', 0.0))
-        # if 'channels' in data:
-        #     __self__.analyse_channel_signal(data.get('channels', []))
-        # elif 'antenna_signals' in data:
-        #     __self__.analyse_antenna_signal(data.get('antenna_signals', []))
+        __self__.targets[PLAN_COMPUTED] = __self__.analyzer.analyze(data)
+        if __self__.targets[PLAN_COMPUTED]:
+            __self__.targets_changed = True
         __self__.plan_global()
-    def not_implemented_yet(__self__):
-        log('This Plan is not implemented yet')
 
-    def analyse_global_signal(__self__, signal_level: float):
-        __self__.targets[PLAN_COMPUTED] = __self__.global_signal_analyzer.analyze(signal_level, __self__.signal_radius)
-        if __self__.targets[PLAN_COMPUTED]:
-            __self__.targets_changed = True
-
-    def analyse_channel_signal(__self__, signals: list[float]):
-        __self__.targets[PLAN_COMPUTED] = __self__.channel_signal_analyzer.analyze(signals, __self__.signal_radius)
-        if __self__.targets[PLAN_COMPUTED]:
-            __self__.targets_changed = True
-
-    def analyse_antenna_signal(__self__, signals: list[dict]):
-        __self__.antenna_signal_map = __self__.antenna_signal_analyzer.analyze(signals, __self__.signal_radius)
-        log(f'Antenna signal map computed with shape {__self__.antenna_signal_map.shape}')
 
     def plan_global(__self__):
         if __self__.current_path and not (__self__.world.world_changed or __self__.targets_changed):
@@ -153,21 +133,7 @@ class Planer:
                 __self__.current_path = __self__.current_path[1:]
                 if len(__self__.current_path) > 0:
                     break
-    def analyse_multi_signal(__self__,signals:list):
-        __self__.analyse_channel_signal(signals)
-    def analyse_antenna_signal(__self__,signals:list):
-        __self__.antenna_signal_map = __self__.antenna_signal_analyzer.analyze(signals, __self__.signal_radius)
-        log(f'Antenna signal map computed with shape {__self__.antenna_signal_map.shape}')
-                    
-    def analyse_signal(__self__,singal_strength:float|list[float]):
-        if isinstance(singal_strength,float):
-            __self__.analyse_global_signal(singal_strength)
-        elif isinstance(singal_strength,list):
-            __self__.analyse_channel_signal(singal_strength)
-        else:
-            log(f'Could not handle singal of type {type(singal_strength)}, clean up and skip calculation')
-            __self__.targets[PLAN_COMPUTED] = []
-            __self__.first_signal = True
+
     def signal_level_to_distance(__self__,signal_level:float)->float:
         # Distance formula
         # s = 1 / (1 + (d/r)²)

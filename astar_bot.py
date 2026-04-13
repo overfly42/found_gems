@@ -37,6 +37,7 @@ class signal_bot:
         __self__.world.update_config(width=data['config']['width'],height = data['config']['height'])
         __self__.planer.update()
         __self__.planer.signal_radius  = data['config']["signal_radius"]
+        __self__.world.signal_radius = data['config']["signal_radius"]
         __self__.planer.max_antenna = data['config'].get("max_antennas",-1)
         __self__.planer.set_antenna = 0
         __self__.planer.plan_antenna.target_antenna_num = min(2,__self__.planer.max_antenna) #really bad style

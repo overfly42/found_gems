@@ -29,14 +29,23 @@ class BaseSignalAnalyzer:
         if max_val == 0 or np.isnan(max_val):
             return np.zeros_like(matrix)
         return matrix / max_val
+    
+    def analyze(self, *args, **kwargs) -> list[tuple[int, int]]:
+        raise NotImplementedError('analyze method must be implemented by subclasses')
 
+    def new_tick(self):
+        pass
 class GlobalSignalAnalyzer(BaseSignalAnalyzer):
     def __init__(self, world: World):
         super().__init__(world)
         self.signal_map = np.zeros_like(world.field, np.float64)
         self.first_signal = True
 
-    def analyze(self, signal_level: float, signal_radius: float) -> list[tuple[int, int]]:
+#    def analyze(self, signal_level: float, signal_radius: float) -> list[tuple[int, int]]:
+    def analyze(self, data:dict) -> list[tuple[int, int]]:
+        signal_level = data.get('signal_level', 0)
+        signal_radius = data.get('signal_radius', 1.0)
+
         if signal_level <= 0:
             log('Discarding Global Signal analysis.')
             return []
@@ -67,8 +76,12 @@ class ChannelSignalAnalyzer(BaseSignalAnalyzer):
     def new_tick(self):
         self.signal_memory.append({})
 
-    def analyze(self, signals: list[float], signal_radius: float) -> list[tuple[int, int]]:
+    #def analyze(self, signals: list[float], signal_radius: float) -> list[tuple[int, int]]:
+    def analyze(self, data:dict) -> list[tuple[int, int]]:
+        
         log('Starting channel signal analysis')
+        signals = data.get('signals', [])
+        signal_radius = data.get('signal_radius', 1.0)
         if not isinstance(signals, list):
             log(f'Cannot analyze channel signal of type {type(signals)}')
             return []
@@ -118,21 +131,53 @@ class ChannelSignalAnalyzer(BaseSignalAnalyzer):
         return sorted(computed, key=lambda pos: euclidian_distance(pos, self.world.bot_pos))
 
 class AntennaSignalAnalyzer(BaseSignalAnalyzer):
-    def analyze(self, signals: list[dict], signal_radius: float) -> np.ndarray:
-        log('Starting antenna signal analysis')
-        rows = self.world.height
-        cols = self.world.width
-        EPS = 1.0
-        map_sum = np.zeros_like(self.world.field, np.int32)
+    DATA_KEY_ANTENNA = 'antenna_signals'
+    DATA_KEY_GLOBAL = 'signal_level'
+    SIGNAL_EPS = 0.005
+    def analyze(self, data:dict) -> list[tuple[int, int]]:
+        if self.DATA_KEY_ANTENNA not in data or self.DATA_KEY_GLOBAL not in data:
+            log('Missing antenna signal data or global signal level, skipping analysis') 
+            return []   
+        #Collect all available singals    
+        antenna_signals = data[self.DATA_KEY_ANTENNA]
+        global_signal_level = data[self.DATA_KEY_GLOBAL]
+        signals = []
+        for x in antenna_signals:
+            signals.append({'position':tuple(x['position']), 'signal':x['signal']})
+        for x in signals:
+            x['position'] = tuple([x['position'][1],x['position'][0]]) #switch x and y to match our coordinate system
+        signals.append({'position':self.world.bot_pos, 'signal':global_signal_level})
+        #Extend the signals by singal maps
+        for x in signals:
+            x['map'] = self.__build_signal_map(x['position'])
+        #accumulate the signal maps and find positions that match the total signal level within an epsilon    
+        sum_map  = np.zeros_like(self.world.field, np.float64)
+        sum_signal = 0.0
+        for x in signals:
+            sum_map += x['map']
+            sum_signal += x['signal']
+            log(f'Signal from position {x["position"]} with level {x["signal"]} contributes max {np.max(x["map"])} to the sum map')
+        if sum_signal <= 0:
+            log('No valid signals found, skipping antenna signal analysis')
+            return []
+        log(f'Summed signal map has shape {sum_map.shape} and max value {np.max(sum_map)} with summed signal level {sum_signal} and {np.max(sum_map)} signal')
+        results = {(x, y) for x, y in np.argwhere(
+            (sum_map < (sum_signal + self.SIGNAL_EPS)) 
+            &
+            (sum_map > (sum_signal - self.SIGNAL_EPS))
+            )}
+        log(f'Found {len(results)} potential positions from antenna signal analysis')
+        
+        return sorted(results, key=lambda pos: euclidian_distance(pos, self.world.bot_pos))
+    def __build_signal_map(self,pos:tuple[int, int])->np.ndarray:
+            x0 = pos[1]
+            y0 = pos[0]
+            x = np.arange(self.world.width)
+            y = np.arange(self.world.height)[:,None]
+            map = np.sqrt(np.abs(x - x0)**2 + np.abs(y - y0)**2)
+            # signal formula
+            # s = 1 / (1 + (d/r)²)
+            # With d = distance, r = __self__.signal_radius, s = signal_level
+            map = 1.0 / (1.0 + (map / float(self.world.signal_radius))**2)
+            return map
 
-        for s in signals:
-            position = tuple(s.get('position'))
-            signal_level = s.get('signal')
-            if signal_level is None or signal_level <= 0:
-                continue
-            distance = self.signal_level_to_distance(signal_level, signal_radius)
-            y, x = np.ogrid[:rows, :cols]
-            dist = np.sqrt((x - position[0]) ** 2 + (y - position[1]) ** 2)
-            ring_map = ((dist >= distance - EPS) & (dist <= distance + EPS)).astype(int)
-            map_sum += ring_map
-        return map_sum
