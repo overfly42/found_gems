@@ -103,7 +103,8 @@ class Planer:
         if __self__.targets[PLAN_COMPUTED] and current_target not in __self__.targets[PLAN_COMPUTED]:
             __self__.targets_changed = True
             current_target = __self__.world.bot_pos if current_target is None else current_target
-            __self__.targets[PLAN_COMPUTED].sort(key=lambda x: euclidian_distance(current_target, x))
+#            __self__.targets[PLAN_COMPUTED].sort(key=lambda x: euclidian_distance(current_target, x))
+            __self__.targets[PLAN_COMPUTED].sort(key=lambda x: euclidian_distance(__self__.world.bot_pos, x))
         __self__.plan_global()
 
 

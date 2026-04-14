@@ -193,11 +193,12 @@ class MultiSourceAnalyzer(BaseSignalAnalyzer):
     DATA_KEY_ANTENNA = 'antenna_signals'
     DATA_KEY_GLOBAL = 'signal_level'
     DIST_EPS = 0.5
-    SIGNAL_EPS = 0.01
+    SIGNAL_EPS = 0.1
     def __init__(self, world: World):
         super().__init__(world)
         self.dist_cache: dict[tuple[int, int], np.ndarray] = {}
         self.sig_cache: dict[tuple[int, int], np.ndarray] = {}
+        self.history: set[tuple[int, int]] = set()
 
     def analyze(self, data:dict) -> list[tuple[int, int]]:
         max_gems = self.world.max_gems
@@ -233,31 +234,37 @@ class MultiSourceAnalyzer(BaseSignalAnalyzer):
         base_coords = [tuple(x) for x in np.argwhere(gem_masks[1]['mask'])]
         #Select a gem randomly, and assume there is one more
         coords = [tuple(x) for x in np.argwhere(mask)]
+        possible_possitions = self.history
+        log(f'History has {len(possible_possitions)} positions')
         if coords:
-            for i in range(15):
-                random_gem = random.choice(coords)
-                random_mask = np.ones_like(mask, dtype=bool)
-                for s in signals:
-                    dist = euclidian_distance(random_gem, s['position'])
-                    signal_value = self.signal_distance_to_signal_level(dist)
-                    signal_rest = s['signal'] - signal_value
-                    random_mask[s['sig_map']-(signal_rest-self.SIGNAL_EPS)<0.0] = False
-                    random_mask[s['sig_map']-(signal_rest+self.SIGNAL_EPS)>0.0] = False
-                coords_new = [tuple(x) for x in np.argwhere(random_mask)]
-                if len(coords_new) == 0 or len(coords_new) > 10:
-                    continue
-                coords_new.append(random_gem)
-                log(f'Gem at {random_gem} with signal value {signal_value} and dist {dist}: {len(coords_new)} positions')
-                base_coords.extend(coords_new)
-        
+            for _ in range( min(50 - len(possible_possitions),25)):
+                possible_possitions.add(tuple(random.choice(coords)))
+        for random_gem in possible_possitions:
+            random_mask = np.ones_like(mask, dtype=bool)
+            random_mask[self.world.field == field_type.wall.value] = False
+            for s in signals:
+                dist = euclidian_distance(random_gem, s['position'])
+                signal_value = self.signal_distance_to_signal_level(dist)
+                signal_rest = s['signal'] - signal_value
+                random_mask[s['sig_map']<(signal_rest-self.SIGNAL_EPS)] = False
+                random_mask[s['sig_map']>(signal_rest+self.SIGNAL_EPS)] = False
+            coords_new = [tuple(x) for x in np.argwhere(random_mask)]
+            if len(coords_new) == 0 or len(coords_new) > 5:
+                continue
+            coords_new.append(random_gem)
+            log(f'Gem at {random_gem} with signal value {signal_value} and dist {dist}: {len(coords_new)} positions')
+            base_coords.extend(coords_new)
+    
         for k, v in gem_masks.items():
             v['count'] = np.sum(v['mask'])
             log(f'Gem mask for {k} gems has {v["count"]} potential positions')
+            base_coords.extend([tuple(x) for x in np.argwhere(v['mask'])])
         #####################################################
         # #Get all coordinates of the remaining fields
         # coords = [tuple(x) for x in np.argwhere(mask)]
         # log(f'Found {len(coords)} potential positions from multi-source signal analysis')
         new_coords = set()
+        self.history = new_coords
         for x in base_coords:
             for _,d in DIRS.items():
                 neighbor = (x[0]+d[0], x[1]+d[1])

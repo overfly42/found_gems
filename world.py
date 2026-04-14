@@ -1,7 +1,6 @@
 
 from collections import defaultdict
-
-from matplotlib.pylab import Enum
+from enum import Enum
 import numpy as np
 
 from common import log, log_level
