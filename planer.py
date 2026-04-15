@@ -120,7 +120,7 @@ class Planer:
         plan_order = [
             PLAN_GEMS,
             PLAN_ANTENNA,
-            PLAN_COMPUTED,
+            # PLAN_COMPUTED,
             PLAN_UNKNOWN,
             PLAN_SIGNAL,
             PLAN_PATROL,
@@ -333,22 +333,37 @@ class PlanAntenna(PlanBasic):
         return [__self__.antenna_positions[next_antenna]]
 
     def get_antenna_move(__self__, bot_pos: tuple[int, int], current_path: list) -> str:
-        if __self__.next_antenna is None or len(current_path) > 10:
+        log(f'Current path for next antenna: {__self__.next_antenna} in {len(current_path)} steps.')
+        if __self__.next_antenna is None:# or len(current_path) > 5:
+            return None
+        if not current_path:
+            return None
+        dist = euclidian_distance(bot_pos, __self__.antenna_positions[__self__.next_antenna])
+        if dist > 5.0:
             return None
         log(f'Moving towards antenna {__self__.next_antenna} at position {__self__.antenna_positions[__self__.next_antenna]}')
         #Check if next move is valid (no wall)
-        next_field_coord = current_path[0] if current_path else None
-        if next_field_coord is None:
-            return None
-        next_field_type = __self__.world.field[next_field_coord]
-        if next_field_type != field_type.wall.value:
-            return None
-        direction = np.array(next_field_coord) - np.array(bot_pos)
-        direction = tuple(np.sign(direction))
-        if direction in DIRS_INV:
-            __self__.antenna_placed[__self__.next_antenna] += 1
-            __self__.next_antenna = None
-            return f'PA{DIRS_INV[tuple(direction)]}'
+        for d in DIRS.values():
+            neighbor = tuple(np.array(bot_pos) + np.array(d))
+            if 0 <= neighbor[0] < __self__.world.height and 0 <= neighbor[1] < __self__.world.width:
+                if __self__.world.field[neighbor] == field_type.wall.value:
+                    log(f'Neighbor {neighbor} is a wall, placing antenna there.')
+                    __self__.antenna_placed[__self__.next_antenna] += 1
+                    __self__.next_antenna = None
+                    return f'PA{DIRS_INV[tuple(d)]}'
+        # next_field_coord = current_path[0] if current_path else None
+        # if next_field_coord is None:
+        #     return None
+        # next_field_type = __self__.world.field[next_field_coord]
+        # log(f'Next field type: {field_type(next_field_type).name} at {next_field_coord}')
+        # if next_field_type != field_type.wall.value:
+        #     return None
+        # direction = np.array(next_field_coord) - np.array(bot_pos)
+        # direction = tuple(np.sign(direction))
+        # if direction in DIRS_INV:
+        #     __self__.antenna_placed[__self__.next_antenna] += 1
+        #     __self__.next_antenna = None
+        #     return f'PA{DIRS_INV[tuple(direction)]}'
         return None
 
     def get_last_antenna_direction(__self__):

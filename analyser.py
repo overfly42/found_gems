@@ -199,8 +199,46 @@ class MultiSourceAnalyzer(BaseSignalAnalyzer):
         self.dist_cache: dict[tuple[int, int], np.ndarray] = {}
         self.sig_cache: dict[tuple[int, int], np.ndarray] = {}
         self.history: set[tuple[int, int]] = set()
-
+        self.bot_signal_history: list[dict] = []
+    def __build_signals(self, data:dict) -> list[dict]:
+        antenna_signals = data[self.DATA_KEY_ANTENNA]
+        global_signal_level = data[self.DATA_KEY_GLOBAL]
+        signals = []
+        for x in antenna_signals:
+            signals.append({'position':tuple(x['position']), 'signal':x['signal']})
+        for x in signals:
+            x['position'] = tuple([x['position'][1],x['position'][0]]) #switch x and y to match our coordinate system
+        bot_data = {'position':self.world.bot_pos, 'signal':global_signal_level}
+        signals.append(bot_data)
+        signals.extend(self.bot_signal_history[-5:]) #Include the last 5 signals of the bot itself to get a better estimate of the signal map around the bot
+        for x in signals:
+            if x['position'] not in self.dist_cache:
+                self.dist_cache[x['position']] = self.__build_distance_map(x['position'])
+            x['dist_map'] = self.dist_cache[x['position']]
+            x['signal_dist'] = self.signal_level_to_distance(x['signal'], self.world.signal_radius)
+            if x['position'] not in self.sig_cache:
+                self.sig_cache[x['position']] = 1.0 / (1.0 + (x['dist_map'] / float(self.world.signal_radius))**2)
+            x['sig_map'] = self.sig_cache[x['position']]
+        return signals
+    def __calculate_positions(self, signals: list[dict],expected_gems: int) -> set[tuple[int, int]]:
+        mask = np.ones_like(self.world.field, dtype=float)
+        #Mask all walls with 0
+        mask[self.world.field == field_type.wall.value] = 0
+        #Mask all visible fields with 0
+        visible = set(self.world.visible_fields.get(self.world.bot_pos, []))
+        for v in visible:
+            mask[v] = 0
+        for x in signals:
+            mask[x['sig_map'] > x['signal']+self.SIGNAL_EPS] = 0
+        #Calculate positions for expected number of gems
+        base_coords = [tuple(x) for x in np.argwhere(mask > 0)]
+        return set(base_coords)
     def analyze(self, data:dict) -> list[tuple[int, int]]:
+        #Collect information
+        max_gems = self.world.max_gems
+        signals = self.__build_signals(data)
+        positions = self.__calculate_positions(signals, max_gems)
+        return list(positions)
         max_gems = self.world.max_gems
         antenna_signals = data[self.DATA_KEY_ANTENNA]
         global_signal_level = data[self.DATA_KEY_GLOBAL]
@@ -237,7 +275,7 @@ class MultiSourceAnalyzer(BaseSignalAnalyzer):
         possible_possitions = self.history
         log(f'History has {len(possible_possitions)} positions')
         if coords:
-            for _ in range( min(50 - len(possible_possitions),25)):
+            for _ in range( min(20 - len(possible_possitions),25)):
                 possible_possitions.add(tuple(random.choice(coords)))
         for random_gem in possible_possitions:
             random_mask = np.ones_like(mask, dtype=bool)

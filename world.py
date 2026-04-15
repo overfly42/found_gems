@@ -1,5 +1,5 @@
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from enum import Enum
 import numpy as np
 
@@ -59,6 +59,9 @@ class World:
         __self__.history = []
         __self__.signal_radius = 1.0
         __self__.max_gems = 0
+        __self__.wall_queue = deque()
+        __self__.wall_visited = set()
+        __self__.first_tick = True
     def update_config(__self__,width:int,height:int):
         __self__.field = np.ones((height,width),dtype=np.int16)
         __self__.field *= field_type.unknown.value
@@ -68,13 +71,44 @@ class World:
         __self__.mid_height = height//2
         __self__.world_changed = True
     def update_walls(__self__,data:list):
-        value_before = np.sum(data)
+        value_before = np.sum(__self__.field)
         for wall in data:
             __self__.field[wall[1],wall[0]] = field_type.wall.value
-        value_after = np.sum(data)
+        value_after = np.sum(__self__.field)
         if value_after != value_before:
             __self__.world_changed = True
             log('Changing world (new Walls).')
+        #Flooding all fields to find hidden walls
+        field_shape_high,field_shape_width = __self__.field.shape
+        target_size = len(__self__.wall_queue)+50
+        queue = __self__.wall_queue
+        visited = __self__.wall_visited
+        log(f'Starting wall update, queue size: {len(queue)}, visited size: {len(visited)}')
+        while queue and len(queue) < target_size:
+            pos = queue.popleft()
+            visited.add(pos)
+            for d in DIRS.values():
+                npos = (pos[0]+d[0],pos[1]+d[1])
+                if npos in visited:
+                    continue
+                if not (0 <= npos[1] < field_shape_width and 0 <= npos[0] < field_shape_high):
+                    continue
+                # if npos in queue:
+                #     continue
+                if __self__.field[npos] == field_type.unknown.value or __self__.field[npos] == field_type.field.value:
+                   queue.append(npos)
+        __self__.wall_queue = deque(set(queue)) #Remove duplicates
+        if queue:
+            log(f'Wall update not finished, queue size: {len(queue)}')
+            log(f'Visited size: {len(visited)}')
+            return #We have not finished the flood fill, wait for next tick
+        unkonwn_fields = np.argwhere(__self__.field == field_type.unknown.value)
+        for field in unkonwn_fields:
+            if tuple(field) not in visited:
+                __self__.field[tuple(field)] = field_type.wall.value
+        log(f'Wall update done, new count: {np.unique(__self__.field,return_counts=True)}')
+        __self__.wall_queue.appendleft(__self__.bot_pos) #We need to add the bot pos back to the queue for the next flood fill
+        __self__.wall_visited.clear()
     def update_floor(__self__,data:list):
         value_before = np.sum(data)
         __self__.fields_seen ={k:v+1 for k,v in __self__.fields_seen.items()}
@@ -106,6 +140,9 @@ class World:
     def update_bot(__self__,data:dict):
         pos = data['bot']
         __self__.bot_pos = (pos[1],pos[0])
+        if __self__.first_tick:
+            __self__.first_tick = False
+            __self__.wall_queue.append(__self__.bot_pos)
     def analyse_world(__self__,data:dict):
         __self__.world_changed = False
         __self__.history.append(data)
