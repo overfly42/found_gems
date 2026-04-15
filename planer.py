@@ -199,13 +199,6 @@ class Planer:
     def get_next_move(__self__)->str:
         antenna_move = __self__.plan_antenna.get_antenna_move(__self__.world.bot_pos, __self__.current_path)
         if antenna_move:
-            bp = __self__.world.bot_pos
-            direction = __self__.plan_antenna.get_last_antenna_direction()
-            if direction and antenna_move != 'PAWAIT':
-                nd = DIRS[DIRS_INV[direction]]
-                xxx = (bp[0]+nd[0],bp[1]+nd[1])
-                __self__.world.fields_seen.pop(xxx,None)
-                log(f'bot will move to {xxx}')
             return antenna_move
         elif __self__.current_path:
             log(f'Path length: {len(__self__.current_path)}')
@@ -340,18 +333,23 @@ class PlanAntenna(PlanBasic):
         return [__self__.antenna_positions[next_antenna]]
 
     def get_antenna_move(__self__, bot_pos: tuple[int, int], current_path: list) -> str:
-        if __self__.next_antenna is None or len(current_path) != 1:
+        if __self__.next_antenna is None or len(current_path) > 10:
             return None
         log(f'Moving towards antenna {__self__.next_antenna} at position {__self__.antenna_positions[__self__.next_antenna]}')
-        direction = (np.sign(__self__.antenna_positions[__self__.next_antenna][0] - bot_pos[0]),
-                    np.sign(__self__.antenna_positions[__self__.next_antenna][1] - bot_pos[1]))
-        log(f'selected direction: {direction}')
-        __self__.last_direction = direction
-        move = f'PA{DIRS_INV[direction]}'
-        if move != 'PAWAIT':
+        #Check if next move is valid (no wall)
+        next_field_coord = current_path[0] if current_path else None
+        if next_field_coord is None:
+            return None
+        next_field_type = __self__.world.field[next_field_coord]
+        if next_field_type != field_type.wall.value:
+            return None
+        direction = np.array(next_field_coord) - np.array(bot_pos)
+        direction = tuple(np.sign(direction))
+        if direction in DIRS_INV:
             __self__.antenna_placed[__self__.next_antenna] += 1
-        __self__.next_antenna = None
-        return move
+            __self__.next_antenna = None
+            return f'PA{DIRS_INV[tuple(direction)]}'
+        return None
 
     def get_last_antenna_direction(__self__):
         return __self__.last_direction
