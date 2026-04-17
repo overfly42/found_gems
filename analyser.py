@@ -193,7 +193,7 @@ class MultiSourceAnalyzer(BaseSignalAnalyzer):
     DATA_KEY_ANTENNA = 'antenna_signals'
     DATA_KEY_GLOBAL = 'signal_level'
     DIST_EPS = 0.5
-    SIGNAL_EPS = 0.1
+    SIGNAL_EPS = 0.01
     def __init__(self, world: World):
         super().__init__(world)
         self.dist_cache: dict[tuple[int, int], np.ndarray] = {}

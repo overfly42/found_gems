@@ -320,6 +320,16 @@ class PlanAntenna(PlanBasic):
         if antennas_left <= 0:
             log('No antennas left to place.')
             return []
+        log('Updating Antenna Positions')
+        for k,v in __self__.antenna_positions.items():
+            if __self__.world.field[v] == field_type.field.value:
+                log(f'Antenna {k} at position {v} is on a field, recalculating.')
+                near_walls = [tuple(x) for x in np.argwhere(__self__.world.field == field_type.wall.value)]
+                near_walls = sorted(near_walls, key=lambda x: euclidian_distance(v, x))
+                if near_walls:
+                    __self__.antenna_positions[k] = near_walls[0]
+                    log(f'New position for antenna {k} is {__self__.antenna_positions[k]}')
+#            log(f'Antenna {k} at position {v} has been placed {__self__.antenna_placed[k]} times.')
         if len(next_antennas) == 0:
             log('All antennas are placed equally, placing next one.')
             next_antennas = list(__self__.antenna_positions)
