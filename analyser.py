@@ -197,7 +197,8 @@ class MultiSourceAnalyzer(BaseSignalAnalyzer):
     SIGMA = 2.5
     DECAY = 0.5
     RESULT_THREASHOLD = 0.75
-    GAUS_RING_INTERVALS = [1.0, 0.85,0.75, 0.66, 0.5, 0.33, 0.25,0.125]
+    # GAUS_RING_INTERVALS = [1.0, 0.85,0.75, 0.66, 0.5, 0.33, 0.25,0.125]
+    GAUS_RING_INTERVALS = [1.0, 0.9,0.8,0.7,0.66, 0.5, 0.4, 0.3,0.2,0.1,0.05]
 
     def __init__(self, world: World):
         super().__init__(world)
