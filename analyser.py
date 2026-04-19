@@ -192,14 +192,21 @@ class AntennaSignalAnalyzer(BaseSignalAnalyzer):
 class MultiSourceAnalyzer(BaseSignalAnalyzer):
     DATA_KEY_ANTENNA = 'antenna_signals'
     DATA_KEY_GLOBAL = 'signal_level'
-    DIST_EPS = 0.5
-    SIGNAL_EPS = 0.01
+    DIST_EPS = 0.75
+    SIGNAL_EPS = 0.6
+    SIGMA = 2.5
+    DECAY = 0.5
+    RESULT_THREASHOLD = 0.75
+    GAUS_RING_INTERVALS = [1.0, 0.85,0.75, 0.66, 0.5, 0.33, 0.25,0.125]
+
     def __init__(self, world: World):
         super().__init__(world)
         self.dist_cache: dict[tuple[int, int], np.ndarray] = {}
         self.sig_cache: dict[tuple[int, int], np.ndarray] = {}
         self.history: set[tuple[int, int]] = set()
         self.bot_signal_history: list[dict] = []
+        self.global_anlazer = GlobalSignalAnalyzer(world)
+        self.signal_map=None
     def __build_signals(self, data:dict) -> list[dict]:
         antenna_signals = data[self.DATA_KEY_ANTENNA]
         global_signal_level = data[self.DATA_KEY_GLOBAL]
@@ -219,7 +226,7 @@ class MultiSourceAnalyzer(BaseSignalAnalyzer):
             if x['position'] not in self.sig_cache:
                 self.sig_cache[x['position']] = 1.0 / (1.0 + (x['dist_map'] / float(self.world.signal_radius))**2)
             x['sig_map'] = self.sig_cache[x['position']]
-        return signals
+        return signals, bot_data
     def __calculate_positions(self, signals: list[dict],expected_gems: int) -> set[tuple[int, int]]:
         mask = np.ones_like(self.world.field, dtype=float)
         #Mask all walls with 0
@@ -233,12 +240,56 @@ class MultiSourceAnalyzer(BaseSignalAnalyzer):
         #Calculate positions for expected number of gems
         base_coords = [tuple(x) for x in np.argwhere(mask > 0)]
         return set(base_coords)
+    def __estimate_gaus_rings(self, singals: list[dict]) -> list[np.ndarray]:
+        #Estimate the gaussian rings for each signal based on the signal level and the distance map
+#        split_factor = [1.0,0.75,0.66,0.5,0.25,0.33]
+        # split_factor = [1.5,1.25,1.0,0.75,0.5,0.25]
+        split_factor = [4.0,3.0,2.0,1.5,1.25,1.0]
+        
+        for x in singals:
+            for sf in self.GAUS_RING_INTERVALS:
+                gaus_ring = self.gaussian_distance_ring(x['position'], x['signal_dist']/sf, sigma=self.SIGMA)
+                if 'gaus_map' in x:
+                    x['gaus_map'] += gaus_ring
+                else:
+                    x['gaus_map'] = gaus_ring
+            x['gaus_pos'] = {(x, y) for x, y in np.argwhere(x['gaus_map'] > self.SIGNAL_EPS)}
+        # for x in singals:
+        #     data.update(x['gaus_pos'])
+        gaus_map = np.sum([x['gaus_map'] for x in singals], axis=0)
+        gaus_map = self.normalize(gaus_map)
+        if self.signal_map is None:
+            self.signal_map = gaus_map
+        gaus_map = self.DECAY * gaus_map
+        self.signal_map = (1 - self.DECAY) * self.signal_map
+        self.signal_map = self.normalize(gaus_map + self.signal_map)
+        self.signal_map[self.signal_map < self.SIGNAL_EPS] = 0
+        data = set(tuple(x) for x in np.argwhere(self.signal_map > self.RESULT_THREASHOLD))
+        # for x in singals:
+        #    data.update(x['gaus_pos'])
+        return data
     def analyze(self, data:dict) -> list[tuple[int, int]]:
         #Collect information
         max_gems = self.world.max_gems
-        signals = self.__build_signals(data)
+        signals,bot_signal = self.__build_signals(data)
         positions = self.__calculate_positions(signals, max_gems)
-        return list(positions)
+        gaus = self.__estimate_gaus_rings([bot_signal])
+        rows,cols = zip(*positions)
+        mask = np.zeros_like(self.world.field, dtype=bool)
+        mask[rows,cols] = True
+        self.signal_map[~mask] = 0
+        np.nan_to_num(self.signal_map, copy=False)
+        return list(set(positions).intersection(gaus))
+        return list(gaus)
+        # ring_maps = self.__estimate_gaus_rings(signals)
+        # ring_map = np.sum(ring_maps)
+        # ring_pos = {tuple(x) for x in np.argwhere(ring_map > self.SIGNAL_EPS)}
+        # positions = ring_pos
+        #Split Signals
+        # ring_pos = {tuple(x) for x in np.argwhere(np.prod(self.__estimate_gaus_rings(signals), axis=0) > self.SIGNAL_EPS)}
+        # ring_pos = positions.intersection(ring_pos)
+        # ring_pos = {tuple(x) for x in ring_pos if self.world.field[x] != field_type.wall.value and x not in self.world.visible_fields.get(self.world.bot_pos, [])}
+        # positions = [tuple(x) for x in np.argwhere(np.prod(positions, axis=0) > self.SIGNAL_EPS)]
         max_gems = self.world.max_gems
         antenna_signals = data[self.DATA_KEY_ANTENNA]
         global_signal_level = data[self.DATA_KEY_GLOBAL]

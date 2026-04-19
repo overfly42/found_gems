@@ -120,7 +120,7 @@ class Planer:
         plan_order = [
             PLAN_GEMS,
             PLAN_ANTENNA,
-            # PLAN_COMPUTED,
+            PLAN_COMPUTED,
             PLAN_UNKNOWN,
             PLAN_SIGNAL,
             PLAN_PATROL,
