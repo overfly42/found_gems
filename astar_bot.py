@@ -24,6 +24,7 @@ class signal_bot:
         __self__.first_tick = True
     def main(__self__):
         for line in sys.stdin:
+            log('*'*30)
             data = json.loads(line)
             if __self__.first_tick:
                 __self__.analyse_first_tick(data)

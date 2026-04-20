@@ -81,7 +81,7 @@ class Planer:
         __self__.plan_antenna = PlanAntenna(world, __self__.path_planner)
         __self__.plan_patrol = PlanPatrol(world, __self__.path_planner, __self__)
         __self__.plan_not_implemented = PlanNotImplemented(world, __self__.path_planner, __self__)
-        __self__.analyzer = MultiSourceAnalyzer(__self__.world)        
+        __self__.analyzer = SingleSourceAnalyzer(__self__.world)        
         __self__.planing_actions = {
             PLAN_COMPUTED: __self__.plan_computed.plan,
             PLAN_GEMS: __self__.plan_gems.plan,
@@ -101,9 +101,9 @@ class Planer:
         __self__.targets[PLAN_COMPUTED] = __self__.analyzer.analyze(data)
         current_target = None if not __self__.current_path else __self__.current_path[-1]
         if __self__.targets[PLAN_COMPUTED] and current_target not in __self__.targets[PLAN_COMPUTED]:
+            log(f'Current target {current_target} not in computed targets {__self__.targets[PLAN_COMPUTED]}, updating targets.')
             __self__.targets_changed = True
             current_target = __self__.world.bot_pos if current_target is None else current_target
-#            __self__.targets[PLAN_COMPUTED].sort(key=lambda x: euclidian_distance(current_target, x))
             __self__.targets[PLAN_COMPUTED].sort(key=lambda x: euclidian_distance(__self__.world.bot_pos, x))
         __self__.plan_global()
 
@@ -119,7 +119,7 @@ class Planer:
         log('Calculating new Path')
         plan_order = [
             PLAN_GEMS,
-            PLAN_ANTENNA,
+            # PLAN_ANTENNA,
             PLAN_COMPUTED,
             PLAN_UNKNOWN,
             PLAN_SIGNAL,
