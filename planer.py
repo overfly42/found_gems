@@ -9,50 +9,15 @@ from world import *
 from analyser import *
 from common import *
 
-class PathPlannerAStar:
-    def __init__(self, world: World):
-        self.world = world
+PLAN_GEMS = 'known_gems'
+PLAN_COMPUTED = 'computed_gems'
+PLAN_SIGNAL = 'potential_gems'
+PLAN_UNKNOWN = 'exploration'
+PLAN_OPPONENTS = 'opponents'
+PLAN_PATROL = 'patrol'
+PLAN_ANTENNA = 'antenna'
+PLAN_PORTALS = 'portals'
 
-    def find_path(self, start: tuple[int, int], target: tuple[int, int]) -> tuple[list[tuple[int, int]], int]:
-        f = self.world.field
-        q = deque()
-        q.append((0, start))
-        current_path = {}
-        score = defaultdict(lambda: float('inf'))
-        score[start] = 0
-
-        while q:
-            _, current = q.popleft()
-            if target == current:
-                break
-            for dx, dy in DIRS.values():
-                nxt = (current[0] + dx, current[1] + dy)
-                if nxt == target:
-                    current_path[nxt] = current
-                    q.clear()
-                    q.append((0, nxt))
-                    break
-                x, y = nxt
-                if x < 0 or x >= self.world.height or y < 0 or y >= self.world.width:
-                    continue
-                if f[x, y] == field_type.wall.value:
-                    continue
-                tentative_score = score[current] + f[x, y]
-                if tentative_score < score[nxt]:
-                    current_path[nxt] = current
-                    score[nxt] = tentative_score
-                    q.append((tentative_score, nxt))
-
-        if target not in current_path:
-            return [], float('inf')
-
-        actual_path = [target]
-        while target in current_path:
-            target = current_path[target]
-            actual_path.append(target)
-        actual_path.reverse()
-        final_score = max([v for k, v in score.items() if k in actual_path])
-        return actual_path, final_score
 
 class Planer:
     def __init__(__self__,world:World):
@@ -74,28 +39,32 @@ class Planer:
         __self__.singal_memory = []
         __self__.current_path:list[tuple[int,int]] = []
         __self__.signal_map = np.zeros_like(__self__.world.field)
-        __self__.path_planner = PathPlannerAStar(__self__.world)
-        __self__.plan_computed = PlanComputed(world, __self__.path_planner, __self__)
-        __self__.plan_gems = PlanGems(world, __self__.path_planner, __self__)
-        __self__.plan_unknown = PlanUnknown(world, __self__.path_planner, __self__)
-        __self__.plan_antenna = PlanAntenna(world, __self__.path_planner)
-        __self__.plan_patrol = PlanPatrol(world, __self__.path_planner, __self__)
-        __self__.plan_not_implemented = PlanNotImplemented(world, __self__.path_planner, __self__)
+        __self__.plan_computed = PlanComputed(world,  __self__)
+        __self__.plan_gems = PlanGems(world, __self__)
+        __self__.plan_unknown = PlanUnknown(world, __self__)
+        __self__.plan_antenna = PlanAntenna(world,__self__)
+        __self__.plan_patrol = PlanPatrol(world, __self__)
+        __self__.plan_portals = PlanPortal(world, __self__)
+        __self__.plan_not_implemented = PlanNotImplemented(world, __self__)
         __self__.analyzer = SingleSourceAnalyzer(__self__.world)        
         __self__.planing_actions = {
-            PLAN_COMPUTED: __self__.plan_computed.plan,
-            PLAN_GEMS: __self__.plan_gems.plan,
-            PLAN_OPPONENTS: __self__.plan_not_implemented.plan,
-            PLAN_PATROL: __self__.plan_patrol.plan,
-            PLAN_SIGNAL: __self__.plan_not_implemented.plan,
-            PLAN_UNKNOWN: __self__.plan_unknown.plan,
-            PLAN_ANTENNA: __self__.plan_antenna.plan
+            PLAN_COMPUTED: __self__.plan_computed,
+            PLAN_GEMS: __self__.plan_gems,
+            PLAN_OPPONENTS: __self__.plan_not_implemented,
+            PLAN_PATROL: __self__.plan_patrol,
+            PLAN_SIGNAL: __self__.plan_not_implemented,
+            PLAN_UNKNOWN: __self__.plan_unknown,
+            PLAN_ANTENNA: __self__.plan_antenna,
+            PLAN_PORTALS: __self__.plan_portals
         }
+        __self__.last_used_palaner = None
+        __self__.max_portals = 0
     def new_tick(__self__):
         __self__.singal_memory.append({})
         __self__.analyzer.new_tick()
     def update(__self__):
         __self__.plan_antenna.update()
+        __self__.plan_portals.update()
     def analyse(__self__,data:dict):
         __self__.new_tick()
         __self__.targets[PLAN_COMPUTED] = __self__.analyzer.analyze(data)
@@ -120,6 +89,7 @@ class Planer:
         plan_order = [
             PLAN_GEMS,
             # PLAN_ANTENNA,
+            PLAN_PORTALS,
             PLAN_COMPUTED,
             PLAN_UNKNOWN,
             PLAN_SIGNAL,
@@ -129,11 +99,12 @@ class Planer:
         __self__.current_path = []
         for plan in plan_order:
             log(f'Using {plan}')
-            targets = __self__.planing_actions[plan]()
+            __self__.last_used_palaner = plan
+            targets = __self__.planing_actions[plan].plan()
             if targets != None:
                 __self__.targets[plan] = targets
             if plan in __self__.targets and len(__self__.targets[plan]) > 0:
-                __self__.current_path,_ = __self__.path_planner.find_path(__self__.world.bot_pos,__self__.targets[plan][0])
+                __self__.current_path,_ = __self__.planing_actions[plan].find_path(__self__.world.bot_pos,__self__.targets[plan][0])
                 __self__.current_path = __self__.current_path[1:]
                 if len(__self__.current_path) > 0:
                     break
@@ -197,24 +168,12 @@ class Planer:
 
         return grid
     def get_next_move(__self__)->str:
-        antenna_move = __self__.plan_antenna.get_antenna_move(__self__.world.bot_pos, __self__.current_path)
-        if antenna_move:
-            return antenna_move
-        elif __self__.current_path:
-            log(f'Path length: {len(__self__.current_path)}')
-            next_pos = __self__.current_path[0]
-            del __self__.current_path[0]
-            log(f'next_pos: {next_pos}')
-            log(f'bot_pos: {__self__.world.bot_pos}')
-            direction =(next_pos[0]-__self__.world.bot_pos[0],next_pos[1]-__self__.world.bot_pos[1])
-            log(f'selected direction: {direction}')
-            move = DIRS_INV[direction]
-        else:
-            move = random.choice(list(DIRS.keys()))
+        if __self__.last_used_palaner == None:
+            log('No palaner used yet, selecting random move.')
             __self__.current_path.clear()
-        if move == 'WAIT':
-            __self__.current_path.clear()
-        return move
+            return random.choice(list(DIRS.keys()))
+        return __self__.planing_actions[__self__.last_used_palaner].get_move()
+
     def highlight_targets(__self__)->str:
         if LOG_LEVEL == log_level.GAME:
             return ''
@@ -234,18 +193,83 @@ class Planer:
         return maps
 
 class PlanBasic:
-    def __init__(__self__,world:World,path_planner:PathPlannerAStar,planer=None):
+    def __init__(__self__,world:World,planer:Planer):
         __self__.world = world
-        __self__.path_planner:PathPlannerAStar = path_planner
         __self__.planer = planer
+        __self__.short_cuts = {}
     def plan(__self__) -> list[tuple[int,int]]:
         raise NotImplementedError()
+    def find_path(self, start: tuple[int, int], target: tuple[int, int]) -> tuple[list[tuple[int, int]], int]:
+        f = self.world.field
+        q = deque()
+        q.append((0, start))
+        current_path = {}
+        score = defaultdict(lambda: float('inf'))
+        score[start] = 0
+
+        while q:
+            _, current = q.popleft()
+            if target == current:
+                break
+            for dx, dy in DIRS.values():
+                nxt = (current[0] + dx, current[1] + dy)
+                if nxt == target:
+                    current_path[nxt] = current
+                    q.clear()
+                    q.append((0, nxt))
+                    break
+                x, y = nxt
+                if x < 0 or x >= self.world.height or y < 0 or y >= self.world.width:
+                    continue
+                if f[x, y] == field_type.wall.value:
+                    continue
+                if f[x,y] == field_type.special.value and not (x,y) in self.short_cuts:
+                    continue
+                shortcut = None
+                if (x,y) in self.short_cuts:
+                    shortcut = self.short_cuts[(x,y)]
+                tentative_score = score[current] + f[x, y]
+                if tentative_score < score[nxt]:
+                    current_path[nxt] = current
+                    if shortcut:
+                        current_path[shortcut] = nxt
+                        score[nxt] = tentative_score
+                        nxt = shortcut
+                    score[nxt] = tentative_score
+                    q.append((tentative_score, nxt))
+
+        if target not in current_path:
+            return [], float('inf')
+
+        actual_path = [target]
+        while target in current_path:
+            target = current_path[target]
+            actual_path.append(target)
+        actual_path.reverse()
+        final_score = max([v for k, v in score.items() if k in actual_path])
+        return actual_path, final_score
+    def get_move(__self__):
+        if __self__.planer.current_path:
+            log(f'Path length: {len(__self__.planer.current_path)}')
+            next_pos = __self__.planer.current_path[0]
+            del __self__.planer.current_path[0]
+            log(f'next_pos: {next_pos}')
+            log(f'bot_pos: {__self__.world.bot_pos}')
+            direction =(next_pos[0]-__self__.world.bot_pos[0],next_pos[1]-__self__.world.bot_pos[1])
+            log(f'selected direction: {direction}')
+            move = DIRS_INV[direction]
+        else:
+            move = random.choice(list(DIRS.keys()))
+            __self__.planer.current_path.clear()
+        if move == 'WAIT':
+            __self__.planer.current_path.clear()
+        return move
 
 class PlanComputed(PlanBasic):
     def plan(__self__):
         targets = list(__self__.planer.targets.get(PLAN_COMPUTED, []))
         for index, target in enumerate(targets):
-            path, _ = __self__.path_planner.find_path(__self__.world.bot_pos, target)
+            path, _ = __self__.find_path(__self__.world.bot_pos, target)
             if len(path) > 1:
                 return targets[index:]
         return []
@@ -262,7 +286,7 @@ class PlanGems(PlanBasic):
                 path_combo = [__self__.world.bot_pos] + list(combo)
                 score = 0
                 for src, dst in zip(path_combo, path_combo[1:]):
-                    score += __self__.path_planner.find_path(src, dst)[1]
+                    score += __self__.find_path(src, dst)[1]
                 distance_score.append(score)
                 log(f'Combo {path_combo} has length {score}')
             min_index = np.argmin(distance_score)
@@ -271,7 +295,7 @@ class PlanGems(PlanBasic):
         log(f'Found {len(combinations)}: to long for computation, select nearest one.')
         closest = []
         for position, value in __self__.world.gems_seen.items():
-            _, cost = __self__.path_planner.find_path(__self__.world.bot_pos, position)
+            _, cost = __self__.find_path(__self__.world.bot_pos, position)
             closest.append((value - cost, position))
         closest.sort(key=lambda x: x[0])
         return [position for _, position in closest]
@@ -293,9 +317,8 @@ class PlanUnknown(PlanBasic):
         return sorted(targets, key=lambda x: euclidian_distance(__self__.world.bot_pos, x))
 
 class PlanAntenna(PlanBasic):
-    def __init__(__self__, world: World, path_planner: PathPlannerAStar):
-        __self__.world = world
-        __self__.path_planner = path_planner
+    def __init__(__self__, world: World,planer:Planer):
+        super().__init__(world, planer)
         __self__.antenna_positions = {}
         __self__.antenna_placed = {}
         __self__.target_antenna_num = 0
@@ -361,23 +384,128 @@ class PlanAntenna(PlanBasic):
                     __self__.antenna_placed[__self__.next_antenna] += 1
                     __self__.next_antenna = None
                     return f'PA{DIRS_INV[tuple(d)]}'
-        # next_field_coord = current_path[0] if current_path else None
-        # if next_field_coord is None:
-        #     return None
-        # next_field_type = __self__.world.field[next_field_coord]
-        # log(f'Next field type: {field_type(next_field_type).name} at {next_field_coord}')
-        # if next_field_type != field_type.wall.value:
-        #     return None
-        # direction = np.array(next_field_coord) - np.array(bot_pos)
-        # direction = tuple(np.sign(direction))
-        # if direction in DIRS_INV:
-        #     __self__.antenna_placed[__self__.next_antenna] += 1
-        #     __self__.next_antenna = None
-        #     return f'PA{DIRS_INV[tuple(direction)]}'
         return None
+    def get_move(__self__):
+        antenna_move = __self__.get_antenna_move(__self__.world.bot_pos, __self__.planer.current_path)
+        if antenna_move:
+            return antenna_move
+        return super().get_move()
 
     def get_last_antenna_direction(__self__):
         return __self__.last_direction
+
+class PlanPortal(PlanBasic):
+    STARTED = 1
+    FINISHED = 2
+    def __init__(__self__, world, planer):
+        super().__init__(world, planer)
+        __self__.portal_positions = {}
+        __self__.portal_connections = [(NW, NE), (NE, SE), (SE, SW), (SW, NW), (NW, SE)]
+        __self__.portal_placed = {x:{'id':None,'count':0,'first':None,'second':None} for x in __self__.portal_connections}
+        __self__.next_portal_pos = None
+        __self__.next_portal_area = None
+    def plan(__self__):
+        __self__.next_portal_pos = None
+        __self__.next_portal_area = None
+        if __self__.planer.max_portals <= 0:
+            return []
+        #Check if portals left to place
+        portals_left = __self__.planer.max_portals - sum([1 for _,v in __self__.portal_placed.items() if v['count'] == __self__.FINISHED])
+        if portals_left <= 0:
+            log('No portals left to place.')
+            for _,v in __self__.portal_placed.items():
+                log(f'{v}')
+            return []
+        #Find already started portals
+        portals_started = sum(1 for _,v in __self__.portal_placed.items() if v['count'] >= __self__.STARTED)
+        if portals_started == __self__.planer.max_portals:
+            #Remove Portals not started by now
+            __self__.portal_placed = {k:v for k,v in __self__.portal_placed.items() if v['count'] >= __self__.STARTED}
+        #Find all Portls that are not placed yet. Not placed is count 1, placed is count 2
+        not_placed = {x:v for x, v in __self__.portal_placed.items() if v['count'] < __self__.FINISHED}
+        if not not_placed:
+            return []
+        target_areas = set()#{NW, NE, SE, SW}
+        #Reduce Target Areas to incompled Portals
+        for k,v in not_placed.items():
+            if v['first']==None:
+                target_areas.add(k[0])
+            if v['second']==None:
+                target_areas.add(k[1])
+        target_distances = {}
+        for t in target_areas:
+            target_distances[t] = euclidian_distance(__self__.world.bot_pos, __self__.portal_positions[t])
+        target_areas = sorted(target_areas, key=lambda x: target_distances[x])        
+        log(f'Portal target areas sorted by distance: {target_areas}')
+        # targets = [__self__.portal_positions[t] for t in target_areas]
+        # Using just the next target for further calculations.
+        target = __self__.portal_positions[target_areas[0]]
+        if __self__.world.field[target] != field_type.field.unknown.value:
+            target_wall = __self__.world.find_next_wall_adjacent_to_field(target)
+            if target_wall:
+                log(f'Target {target} is not unknown, moving to next wall {target_wall} to find new portal position for {target_areas[0]}.')
+                __self__.next_portal_pos = target_wall
+                __self__.next_portal_area = target_areas[0]
+                return [target_wall]
+            else:
+                log(f'Target {target} is not unknown, but no adjacent wall found, skipping portal placement.')
+        return [target]
+    def update(__self__):
+        __self__.portal_positions = {NW: (__self__.world.mid_height//2,__self__.world.mid_width//2),
+                                      SE: ((3*__self__.world.mid_height)//2,(3*__self__.world.mid_width)//2),
+                                      NE: (__self__.world.mid_height//2,(3*__self__.world.mid_width)//2),
+                                      SW: ((3*__self__.world.mid_height)//2,__self__.world.mid_width//2)}
+    def get_move(__self__):
+        if not __self__.next_portal_pos:
+            return super().get_move()
+        next_positions = {d:tuple(np.array(__self__.world.bot_pos) + np.array(d)) for d in DIRS.values()}
+        if not __self__.next_portal_pos in next_positions.values():
+            return super().get_move()
+        #Find relevant fields
+        incmplete_connections = {k:v for k,v in __self__.portal_placed.items() if v['count'] == 1}
+        relevant_data = None
+        element = None
+        def extract_data(cons:dict):
+            for k,v in cons.items():
+                if k[0] == __self__.next_portal_area and not v['first']:
+                    return 'first',v
+                elif k[1] == __self__.next_portal_area and not v['second']:
+                    return 'second',v
+            return None,None
+        element,relevant_data = extract_data(incmplete_connections)
+        if not element:
+            incmplete_connections = {k:v for k,v in __self__.portal_placed.items() if v['count'] == 0}
+            element,relevant_data = extract_data(incmplete_connections)
+        if element:
+            #Anything was found
+            portal_id = relevant_data['id']
+            if portal_id is None:
+                #Get Next Portal ID
+                portal_ids = [v['id'] for v in __self__.portal_placed.values() if v['id'] != None]
+                portal_id = len(portal_ids)+1
+                log(f'Next Portal ID to place is {portal_id}')
+                relevant_data['id'] = portal_id
+            portal_dir = [k for k,v in next_positions.items() if v == __self__.next_portal_pos]
+            if len(portal_dir) != 1:
+                log(f'Portal direction is abitious: {portal_dir}')
+                __self__.next_portal_area = None
+                __self__.next_portal_pos = None
+                return super().get_move()
+            portal_dir = portal_dir[0]
+            portal_dir = DIRS_INV[portal_dir]
+            move = f'P{portal_id}{portal_dir}'
+            relevant_data[element]=__self__.next_portal_pos
+            relevant_data['count'] = relevant_data['count']+1
+            __self__.world.field[__self__.next_portal_pos] = field_type.special.value
+            if relevant_data['count'] == 2:
+                __self__.short_cuts[relevant_data['first']] = relevant_data['second']
+                __self__.short_cuts[relevant_data['second']] = relevant_data['first']
+        else:
+            move = super().get_move()
+        __self__.next_portal_area = None
+        __self__.next_portal_pos = None
+        return move
+
 
 class PlanNotImplemented(PlanBasic):
     def plan(__self__):
@@ -398,7 +526,7 @@ class PlanPatrol(PlanBasic):
         if len(possible_targets) > MAX_PATROL_TARGET:
             log(f'Reducing possible targets to {MAX_PATROL_TARGET}')
             possible_targets = possible_targets[:MAX_PATROL_TARGET]
-        target_values = {k: __self__.path_planner.find_path(__self__.world.bot_pos, k)[1] for k in possible_targets}
+        target_values = {k: __self__.find_path(__self__.world.bot_pos, k)[1] for k in possible_targets}
         targets = [k for k, v in sorted(target_values.items(), key=lambda item: item[1])]
         log(f'Patrol Fields: {targets}')
         return targets

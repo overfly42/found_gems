@@ -26,13 +26,6 @@ COPUTE_THREASHOLD = 0.75
 NUM_SIGNAL_OCCOURENCES = 2
 #endregion
 MAX_PATROL_TARGET = 10
-PLAN_GEMS = 'known_gems'
-PLAN_COMPUTED = 'computed_gems'
-PLAN_SIGNAL = 'potential_gems'
-PLAN_UNKNOWN = 'exploration'
-PLAN_OPPONENTS = 'opponents'
-PLAN_PATROL = 'patrol'
-PLAN_ANTENNA = 'antenna'
 #endregion
 #region quadrants
 NW = 'North-West'
@@ -45,6 +38,7 @@ class field_type(Enum):
     unknown = 10
     field = 1
     wall = 100
+    special = 2
 
 class World:
     def __init__(__self__):
@@ -73,7 +67,8 @@ class World:
     def update_walls(__self__,data:list):
         value_before = np.sum(__self__.field)
         for wall in data:
-            __self__.field[wall[1],wall[0]] = field_type.wall.value
+            if __self__.field[wall[1],wall[0]] == field_type.unknown.value:
+                __self__.field[wall[1],wall[0]] = field_type.wall.value
         value_after = np.sum(__self__.field)
         if value_after != value_before:
             __self__.world_changed = True
@@ -150,3 +145,39 @@ class World:
         __self__.update_walls(data.get("wall",[]))
         __self__.update_floor(data.get("floor",[]))
         __self__.update_gems(data.get('visible_gems',[]))
+    
+    def find_next_wall_adjacent_to_field(__self__, start_pos: tuple[int, int]) -> tuple[int, int] | None:
+        """
+        Finds the closest wall (100) that is adjacent to a field (1) from the given start position.
+        Returns the position of the wall as (y, x), or None if no such wall is found.
+        """
+        if __self__.field is None:
+            return None
+        
+        queue = deque([start_pos])
+        visited = set([start_pos])
+        
+        while queue:
+            current = queue.popleft()
+            for dy, dx in DIRS.values():
+                ny, nx = current[0] + dy, current[1] + dx
+                if not (0 <= ny < __self__.height and 0 <= nx < __self__.width):
+                    continue
+                if (ny, nx) in visited:
+                    continue
+                visited.add((ny, nx))
+                if __self__.field[ny, nx] == field_type.wall.value:
+                    # Check if this wall has a field neighbor
+                    has_field_neighbor = False
+                    for ddy, ddx in DIRS.values():
+                        nny, nnx = ny + ddy, nx + ddx
+                        if (0 <= nny < __self__.height and 0 <= nnx < __self__.width and 
+                            __self__.field[nny, nnx] == field_type.field.value):
+                            has_field_neighbor = True
+                            break
+                    if has_field_neighbor:
+                        return (ny, nx)
+                else:
+                    # Not a wall, can continue exploring
+                    queue.append((ny, nx))
+        return None

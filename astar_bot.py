@@ -1,15 +1,9 @@
 import json
 import sys
-import os
-import numpy as np
-
-from enum import Enum
-from collections import defaultdict, deque
-from itertools import permutations
 
 from planer import Planer
-from world import DIRS, DIRS_INV, PLAN_COMPUTED, PLAN_UNKNOWN, World
-from common import LOG_LEVEL, log, log_level
+from world import  World
+from common import  log, log_level
 
 
 
@@ -41,6 +35,7 @@ class signal_bot:
         __self__.world.signal_radius = data['config']["signal_radius"]
         __self__.world.max_gems = data['config']["max_gems"]
         __self__.planer.max_antenna = data['config'].get("max_antennas",-1)
+        __self__.planer.max_portals = data['config'].get("max_portals",-1)
         __self__.planer.set_antenna = 0
         __self__.planer.plan_antenna.target_antenna_num = min(2,__self__.planer.max_antenna) #really bad style
         log(f'Setting target antenna num to {__self__.planer.plan_antenna.target_antenna_num}')
